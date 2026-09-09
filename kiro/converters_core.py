@@ -31,7 +31,7 @@ to convert their formats to Kiro API format.
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -45,6 +45,7 @@ from kiro.config import (
     AUTO_TRIM_PAYLOAD,
 )
 from kiro.payload_guards import check_payload_size, trim_payload_to_limit
+from kiro.native_reasoning import native_reasoning_fields
 
 
 # ==================================================================================================
@@ -1490,6 +1491,11 @@ def build_kiro_payload(
     Raises:
         ValueError: If there are no messages to send
     """
+    thinking_config = replace(thinking_config, native_fields=native_reasoning_fields(
+        model_id, thinking_config.native_fields,
+        thinking_config.enabled, thinking_config.budget_tokens,
+    ))
+
     # Process tools with long descriptions
     processed_tools, tool_documentation = process_tools_with_long_descriptions(tools)
 

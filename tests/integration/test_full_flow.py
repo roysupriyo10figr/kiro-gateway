@@ -21,7 +21,8 @@ class TestNativeReasoningFlow:
 
     @pytest.mark.parametrize("api", ["anthropic", "openai"])
     @pytest.mark.parametrize("stream", [False, True])
-    def test_effort_reaches_upstream(self, api: str, stream: bool) -> None:
+    @pytest.mark.parametrize("model", ["claude-opus-5", "gpt-5.6-sol"])
+    def test_effort_reaches_upstream(self, api: str, stream: bool, model: str) -> None:
         """Native effort settings bypass fake thinking in both API modes."""
         from kiro.models_anthropic import AnthropicMessagesRequest
         from kiro.models_openai import ChatCompletionRequest
@@ -29,7 +30,7 @@ class TestNativeReasoningFlow:
         from kiro.converters_openai import build_kiro_payload
 
         common = dict(
-            model="claude-opus-5",
+            model=model,
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=1024,
             stream=stream,
@@ -39,13 +40,13 @@ class TestNativeReasoningFlow:
                 **common, thinking={"type": "adaptive"}, output_config={"effort": "max"}
             )
             payload = anthropic_to_kiro(request, "test", "profile")
-            assert payload["additionalModelRequestFields"]["thinking"] == {
-                "type": "adaptive"
-            }
+            if model == "claude-opus-5":
+                assert payload["additionalModelRequestFields"]["thinking"] == {"type": "adaptive"}
         else:
             request = ChatCompletionRequest(**common, reasoning_effort="max")
             payload = build_kiro_payload(request, "test", "profile")
-        assert payload["additionalModelRequestFields"]["output_config"] == {
+        effort_key = "reasoning" if model == "gpt-5.6-sol" else "output_config"
+        assert payload["additionalModelRequestFields"][effort_key] == {
             "effort": "max"
         }
         assert (
@@ -58,8 +59,9 @@ class TestNativeReasoningFlow:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("api", ["anthropic", "openai"])
     @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("combined", [False, True])
     async def test_native_events_preserve_text_and_signature(
-        self, api: str, stream: bool
+        self, api: str, stream: bool, combined: bool
     ) -> None:
         """Fragmented native events survive both streaming and collected responses."""
         from typing import AsyncGenerator
@@ -73,8 +75,7 @@ class TestNativeReasoningFlow:
             for chunk in [
                 b'{"te',
                 b'xt":"reason"}',
-                b'{"text":"reason"}',
-                b'{"signature":"signed"}',
+                b'{"signature":"signed","text":"reason"}' if combined else b'{"text":"reason"}{"signature":"signed"}',
                 b'{"content":"Answer"}',
             ]:
                 yield chunk

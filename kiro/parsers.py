@@ -305,6 +305,15 @@ class AwsEventStreamParser:
                 event = self._process_event(data, earliest_type)
                 if event:
                     events.append(event)
+                # Sol can return reasoning text and signature in the same event.
+                if earliest_type in ("thinking", "thinking_signature"):
+                    other_type = "thinking_signature" if earliest_type == "thinking" else "thinking"
+                    other = self._process_event(data, other_type)
+                    if other:
+                        if other_type == "thinking":
+                            events.insert(len(events) - (1 if event else 0), other)
+                        else:
+                            events.append(other)
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON: {json_str[:100]}")
 

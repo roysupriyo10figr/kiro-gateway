@@ -187,6 +187,28 @@ account. Change `KIRO_CLAUDE_MODEL` and `KIRO_CLAUDE_EFFORT` in `.env` as needed
 Passing an effort setting does not guarantee identical reasoning behavior to
 Anthropic's hosted service.
 
+## Optional: use Sol for one session
+
+Keep the wrapper's Opus default and override it for one launch:
+
+```sh
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000 \
+  kiro-claude --model gpt-5.6-sol --effort max
+```
+
+Sol's advertised context window is 272K, not 1M. The gateway maps Claude Code's
+adaptive thinking and effort controls to Sol's native `reasoning.effort` field.
+The verified levels are `none`, `low`, `medium`, `high`, `xhigh`, and `max`.
+OpenAI `reasoning_effort` uses the same model-specific mapping. Sol does not
+accept Claude's fixed `budget_tokens`; use adaptive thinking and an effort level.
+
+Sol can send reasoning after its answer. For Claude Code compatibility, the
+Anthropic streaming adapter buffers Sol's answer and tool events until reasoning
+has arrived, then emits them after the thinking blocks. This prevents a trailing
+thinking block from replacing the visible final answer in Claude Code. Keepalives
+continue during the wait. OpenAI streaming preserves its existing event order;
+non-streaming Anthropic responses already place thinking before answer text.
+
 ## Optional: connect over a Tailnet
 
 Only the gateway Mac needs Kiro CLI and the SSO database. A remote client needs

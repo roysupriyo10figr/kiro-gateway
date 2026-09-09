@@ -49,6 +49,7 @@ from kiro.streaming_core import (
 )
 from kiro.tokenizer import count_tokens, estimate_request_tokens
 from kiro.parsers import parse_bracket_tool_calls, deduplicate_tool_calls
+from kiro.model_resolver import normalize_model_name
 from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
     FIRST_TOKEN_MAX_RETRIES,
@@ -128,6 +129,31 @@ def _extract_cache_usage_fields(usage: Optional[Dict[str, Any]]) -> Dict[str, in
             extracted[target_key] = int(value)
 
     return extracted
+
+
+async def reasoning_before_answer(
+    source: AsyncGenerator[KiroEvent, None],
+) -> AsyncGenerator[KiroEvent, None]:
+    """Order Sol's trailing reasoning before its answer for Anthropic clients.
+
+    Args:
+        source: Owned Kiro event stream. Sol may send reasoning after answer text.
+
+    Yields:
+        Reasoning events first, followed by buffered answer and tool events in
+        their original order. Upstream content is preserved in full.
+    """
+    buffered: List[KiroEvent] = []
+    try:
+        async for event in source:
+            if event.type in ("thinking", "thinking_signature"):
+                yield event
+            else:
+                buffered.append(event)
+        for event in buffered:
+            yield event
+    finally:
+        await source.aclose()
 
 
 async def stream_kiro_to_anthropic(
@@ -224,9 +250,14 @@ async def stream_kiro_to_anthropic(
             },
         )
 
-        async for event in parse_kiro_stream(response, first_token_timeout):
+        source = parse_kiro_stream(response, first_token_timeout)
+        if normalize_model_name(model) == "gpt-5.6-sol":
+            source = reasoning_before_answer(source)
+        async for event in source:
             if event.type == "content":
                 content = event.content or ""
+                if not content:
+                    continue
                 full_content += content
 
                 # Close thinking block if it was open and we're now getting regular content
@@ -283,6 +314,13 @@ async def stream_kiro_to_anthropic(
                 if FAKE_REASONING_HANDLING == "as_reasoning_content":
                     # Use native Anthropic thinking content blocks
                     if not thinking_block_started:
+                        if text_block_started and text_block_index is not None:
+                            yield format_sse_event(
+                                "content_block_stop",
+                                {"type": "content_block_stop", "index": text_block_index},
+                            )
+                            text_block_started = False
+                            current_block_index += 1
                         thinking_block_index = current_block_index
                         yield format_sse_event(
                             "content_block_start",

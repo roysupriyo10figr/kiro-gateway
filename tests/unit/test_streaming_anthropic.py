@@ -60,6 +60,61 @@ def mock_response():
 # ==================================================================================================
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sequence", [
+    ["content", "thinking"],
+    ["content", "thinking", "content"],
+    ["thinking", "content", "thinking", "content"],
+    ["content", "thinking", "thinking", "content"],
+])
+async def test_interleaved_text_and_thinking_have_unique_block_indices(
+    sequence: list[str], mock_response: AsyncMock,
+    mock_model_cache: MagicMock, mock_auth_manager: MagicMock,
+) -> None:
+    """Late reasoning must not overwrite answer blocks in Anthropic clients."""
+    from typing import AsyncGenerator
+
+    async def source(*args: object, **kwargs: object) -> AsyncGenerator[KiroEvent, None]:
+        yield KiroEvent(type="content", content="")
+        for kind in sequence:
+            if kind == "content":
+                yield KiroEvent(type=kind, content="answer")
+            else:
+                yield KiroEvent(type=kind, thinking_content="reason", native_thinking=True)
+
+    with patch("kiro.streaming_anthropic.parse_kiro_stream", source):
+        chunks = [chunk async for chunk in stream_kiro_to_anthropic(
+            mock_response, "gpt-5.6-sol", mock_model_cache, mock_auth_manager
+        )]
+    events = [json.loads(line[6:]) for chunk in chunks for line in chunk.splitlines() if line.startswith("data: ")]
+    active = None
+    blocks = {}
+    for event in events:
+        kind = event["type"]
+        if kind == "content_block_start":
+            index = event["index"]
+            assert active is None
+            assert index == len(blocks)
+            active = index
+            blocks[index] = {"type": event["content_block"]["type"], "value": ""}
+        elif kind == "content_block_delta":
+            assert event["index"] == active
+            delta = event["delta"]
+            if delta["type"] == "text_delta":
+                assert blocks[active]["type"] == "text"
+                blocks[active]["value"] += delta["text"]
+            elif delta["type"] == "thinking_delta":
+                assert blocks[active]["type"] == "thinking"
+                blocks[active]["value"] += delta["thinking"]
+        elif kind == "content_block_stop":
+            assert event["index"] == active
+            active = None
+    assert active is None
+    assert list(blocks.values())[-1]["type"] == "text"
+    assert "".join(b["value"] for b in blocks.values() if b["type"] == "text") == "answer" * sequence.count("content")
+    assert "".join(b["value"] for b in blocks.values() if b["type"] == "thinking") == "reason" * sequence.count("thinking")
+
+
 class TestGenerateMessageId:
     """Tests for generate_message_id() function."""
 
