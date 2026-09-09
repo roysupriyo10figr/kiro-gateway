@@ -20,12 +20,16 @@ def _make_payload(num_pairs=5, content_size=100):
     """Helper: build a minimal Kiro-shaped payload with N user/assistant pairs."""
     history = []
     for i in range(num_pairs):
-        history.append({
-            "userInputMessage": {"content": f"user message {i} " + "x" * content_size}
-        })
-        history.append({
-            "assistantResponseMessage": {"content": f"assistant message {i} " + "y" * content_size}
-        })
+        history.append(
+            {"userInputMessage": {"content": f"user message {i} " + "x" * content_size}}
+        )
+        history.append(
+            {
+                "assistantResponseMessage": {
+                    "content": f"assistant message {i} " + "y" * content_size
+                }
+            }
+        )
     return {
         "conversationState": {
             "chatTriggerType": "MANUAL",
@@ -40,7 +44,6 @@ def _make_payload(num_pairs=5, content_size=100):
 
 
 class TestCheckPayloadSize:
-
     def test_check_payload_size_returns_bytes(self):
         """Correct byte count for a simple payload."""
         payload = {"key": "value"}
@@ -59,7 +62,6 @@ class TestCheckPayloadSize:
 
 
 class TestTrimPayloadToLimit:
-
     def test_trim_does_nothing_when_under_limit(self):
         """No-op when payload is small."""
         payload = _make_payload(num_pairs=2, content_size=10)
@@ -112,7 +114,9 @@ class TestTrimPayloadToLimit:
             {
                 "assistantResponseMessage": {
                     "content": "resp0",
-                    "toolUses": [{"toolUseId": "tool-A", "name": "read", "input": "{}"}],
+                    "toolUses": [
+                        {"toolUseId": "tool-A", "name": "read", "input": "{}"}
+                    ],
                 }
             },
             {
@@ -138,7 +142,9 @@ class TestTrimPayloadToLimit:
             "conversationState": {
                 "conversationId": "test",
                 "chatTriggerType": "MANUAL",
-                "currentMessage": {"userInputMessage": {"content": "now", "modelId": "m"}},
+                "currentMessage": {
+                    "userInputMessage": {"content": "now", "modelId": "m"}
+                },
                 "history": history,
             }
         }
@@ -164,7 +170,9 @@ class TestTrimPayloadToLimit:
             "conversationState": {
                 "conversationId": "test",
                 "chatTriggerType": "MANUAL",
-                "currentMessage": {"userInputMessage": {"content": "now", "modelId": "m"}},
+                "currentMessage": {
+                    "userInputMessage": {"content": "now", "modelId": "m"}
+                },
                 "history": history,
             }
         }
@@ -194,7 +202,9 @@ class TestTrimPayloadToLimit:
             "conversationState": {
                 "conversationId": "test",
                 "chatTriggerType": "MANUAL",
-                "currentMessage": {"userInputMessage": {"content": "hi", "modelId": "m"}},
+                "currentMessage": {
+                    "userInputMessage": {"content": "hi", "modelId": "m"}
+                },
             }
         }
         stats = trim_payload_to_limit(payload, max_bytes=100)

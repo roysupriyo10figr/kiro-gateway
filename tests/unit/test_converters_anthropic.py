@@ -1751,9 +1751,10 @@ class TestAnthropicToKiro:
 # Tests for Client Thinking Budget Support (Issue #111)
 # ==================================================================================================
 
+
 class TestExtractThinkingConfigFromAnthropic:
     """Tests for extract_thinking_config_from_anthropic function."""
-    
+
     def test_no_thinking(self):
         """
         What it does: Verifies ThinkingConfig(enabled=True, budget_tokens=None) when thinking=None
@@ -1763,36 +1764,42 @@ class TestExtractThinkingConfigFromAnthropic:
         request = AnthropicMessagesRequest(
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="test")],
-            max_tokens=1024
+            max_tokens=1024,
         )
-        
+
         print("Extracting thinking config...")
         config = extract_thinking_config_from_anthropic(request)
-        
-        print(f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}")
+
+        print(
+            f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}"
+        )
         assert config.enabled is True
         assert config.budget_tokens is None
-    
+
     def test_thinking_enabled_with_budget(self):
         """
         What it does: Verifies correct extraction of thinking.budget_tokens
         Purpose: Ensure budget is extracted from official Anthropic parameter
         """
-        print("Creating request with thinking={'type': 'enabled', 'budget_tokens': 8000}...")
+        print(
+            "Creating request with thinking={'type': 'enabled', 'budget_tokens': 8000}..."
+        )
         request = AnthropicMessagesRequest(
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="test")],
             max_tokens=1024,
-            thinking={"type": "enabled", "budget_tokens": 8000}
+            thinking={"type": "enabled", "budget_tokens": 8000},
         )
-        
+
         print("Extracting thinking config...")
         config = extract_thinking_config_from_anthropic(request)
-        
-        print(f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}")
+
+        print(
+            f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}"
+        )
         assert config.enabled is True
         assert config.budget_tokens == 8000
-    
+
     def test_thinking_enabled_without_budget(self):
         """
         What it does: Verifies ThinkingConfig when thinking.type="enabled" but no budget_tokens
@@ -1803,16 +1810,18 @@ class TestExtractThinkingConfigFromAnthropic:
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="test")],
             max_tokens=1024,
-            thinking={"type": "enabled"}
+            thinking={"type": "enabled"},
         )
-        
+
         print("Extracting thinking config...")
         config = extract_thinking_config_from_anthropic(request)
-        
-        print(f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}")
+
+        print(
+            f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}"
+        )
         assert config.enabled is True
         assert config.budget_tokens is None
-    
+
     def test_thinking_disabled(self):
         """
         What it does: Verifies ThinkingConfig(enabled=False) when thinking.type="disabled"
@@ -1823,16 +1832,18 @@ class TestExtractThinkingConfigFromAnthropic:
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="test")],
             max_tokens=1024,
-            thinking={"type": "disabled"}
+            thinking={"type": "disabled"},
         )
-        
+
         print("Extracting thinking config...")
         config = extract_thinking_config_from_anthropic(request)
-        
-        print(f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}")
+
+        print(
+            f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}"
+        )
         assert config.enabled is False
         assert config.budget_tokens is None
-    
+
     def test_thinking_invalid_type(self):
         """
         What it does: Verifies default config when thinking.type is unknown
@@ -1843,21 +1854,22 @@ class TestExtractThinkingConfigFromAnthropic:
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="test")],
             max_tokens=1024,
-            thinking={"type": "unknown"}
+            thinking={"type": "unknown"},
         )
-        
+
         print("Extracting thinking config...")
         config = extract_thinking_config_from_anthropic(request)
-        
-        print(f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}")
+
+        print(
+            f"Comparing: enabled={config.enabled}, budget_tokens={config.budget_tokens}"
+        )
         assert config.enabled is True
         assert config.budget_tokens is None
-    
 
 
 class TestAnthropicToKiroIntegration:
     """Integration tests for anthropic_to_kiro with thinking config."""
-    
+
     def test_extracts_and_passes_thinking_config(self):
         """
         What it does: Verifies anthropic_to_kiro extracts thinking_config and passes to core
@@ -1868,19 +1880,24 @@ class TestAnthropicToKiroIntegration:
             model="claude-sonnet-4.5",
             messages=[AnthropicMessage(role="user", content="Test message")],
             max_tokens=1024,
-            thinking={"type": "enabled", "budget_tokens": 6000}
+            thinking={"type": "enabled", "budget_tokens": 6000},
         )
-        
+
         print("Calling anthropic_to_kiro...")
-        with patch("kiro.converters_anthropic.get_model_id_for_kiro", return_value="claude-sonnet-4.5"):
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-4.5",
+        ):
             with patch("kiro.converters_core.FAKE_REASONING_ENABLED", True):
                 with patch("kiro.converters_core.FAKE_REASONING_BUDGET_CAP", 10000):
-                    payload = anthropic_to_kiro(request, "test-conv-123", "arn:aws:test")
-        
+                    payload = anthropic_to_kiro(
+                        request, "test-conv-123", "arn:aws:test"
+                    )
+
         print("Extracting userInputMessage content...")
         user_input = payload["conversationState"]["currentMessage"]["userInputMessage"]
         content = user_input["content"]
-        
+
         print(f"Checking for <max_thinking_length>6000</max_thinking_length>...")
         assert "<max_thinking_length>6000</max_thinking_length>" in content
         assert "<thinking_mode>enabled</thinking_mode>" in content

@@ -598,16 +598,16 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="my-super-secret-password-123"  # PROXY_API_KEY Anda dari .env
+    api_key="my-super-secret-password-123",  # PROXY_API_KEY Anda dari .env
 )
 
 response = client.chat.completions.create(
     model="claude-sonnet-4-5",
     messages=[
         {"role": "system", "content": "Kamu adalah asisten yang membantu."},
-        {"role": "user", "content": "Halo!"}
+        {"role": "user", "content": "Halo!"},
     ],
-    stream=True
+    stream=True,
 )
 
 for chunk in response:
@@ -626,7 +626,7 @@ from langchain_openai import ChatOpenAI
 llm = ChatOpenAI(
     base_url="http://localhost:8000/v1",
     api_key="my-super-secret-password-123",  # PROXY_API_KEY Anda dari .env
-    model="claude-sonnet-4-5"
+    model="claude-sonnet-4-5",
 )
 
 response = llm.invoke("Halo, apa kabar?")
@@ -702,14 +702,14 @@ import anthropic
 
 client = anthropic.Anthropic(
     api_key="my-super-secret-password-123",  # PROXY_API_KEY Anda dari .env
-    base_url="http://localhost:8000"
+    base_url="http://localhost:8000",
 )
 
 # Tanpa streaming
 response = client.messages.create(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "Halo!"}]
+    messages=[{"role": "user", "content": "Halo!"}],
 )
 print(response.content[0].text)
 
@@ -717,7 +717,7 @@ print(response.content[0].text)
 with client.messages.stream(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "Halo!"}]
+    messages=[{"role": "user", "content": "Halo!"}],
 ) as stream:
     for text in stream.text_stream:
         print(text, end="", flush=True)

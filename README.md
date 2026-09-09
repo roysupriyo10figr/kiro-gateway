@@ -234,6 +234,26 @@ the gateway still requires its password.
 
 ## Troubleshooting
 
+### Reasoning and streaming
+
+The gateway forwards Anthropic adaptive thinking and `output_config.effort`
+through Kiro's native `additionalModelRequestFields`. OpenAI
+`reasoning_effort` values other than `none` are forwarded as native effort
+settings too. Kiro validates model support and allowed values. Native requests
+do not receive the legacy fake-thinking prompt instructions.
+
+Native reasoning text and signatures are returned as Anthropic thinking blocks
+and signature deltas, or OpenAI `reasoning_content` and `reasoning_signature`.
+This works in streaming and non-streaming modes. Legacy requests without native
+controls retain the existing configurable fake-reasoning behavior.
+
+Streaming responses send keepalives every 10 seconds during idle periods
+(Anthropic ping events, OpenAI SSE comments). These keep the connection active;
+they are not model output and do not make inference faster. Initial upstream
+connection/authentication and response-header waits still occur before the SSE
+response starts, preserving HTTP error status codes. Non-streaming responses
+wait for completion and do not send keepalives.
+
 - **Connection refused:** start the gateway and check that its bind address and
   port match `KIRO_GATEWAY_URL`. For remote access, keep the gateway Mac awake.
 - **401:** the client and gateway `PROXY_API_KEY` values must match.

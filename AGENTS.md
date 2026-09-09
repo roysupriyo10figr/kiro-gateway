@@ -384,6 +384,7 @@ def extract_text_content(content: Any) -> str:
     """Extract text from various content formats."""
     pass
 
+
 async def refresh_token(self) -> str:
     """Refresh access token."""
     pass

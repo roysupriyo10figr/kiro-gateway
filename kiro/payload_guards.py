@@ -36,6 +36,7 @@ from typing import Any, Dict
 @dataclass
 class PayloadTrimStats:
     """Statistics from a payload trim operation."""
+
     original_bytes: int
     final_bytes: int
     original_entries: int

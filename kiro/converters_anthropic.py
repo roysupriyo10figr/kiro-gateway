@@ -370,58 +370,75 @@ def convert_anthropic_tools(
     return unified_tools if unified_tools else None
 
 
-def extract_thinking_config_from_anthropic(request: AnthropicMessagesRequest) -> ThinkingConfig:
+def extract_thinking_config_from_anthropic(
+    request: AnthropicMessagesRequest,
+) -> ThinkingConfig:
     """
     Extract thinking configuration from Anthropic request.
-    
+
     Handles thinking parameter:
+    - Adaptive thinking or output_config.effort -> native additionalModelRequestFields
     - {"type": "enabled", "budget_tokens": N} → enabled with budget
     - {"type": "disabled"} → disabled
     - None → enabled with default budget
-    
+
     Args:
         request: Anthropic MessagesRequest
-    
+
     Returns:
         ThinkingConfig for core layer
-    
+
     Examples:
         >>> # No thinking specified → use defaults
         >>> request = AnthropicMessagesRequest(model="claude-sonnet-4.5", messages=[...], max_tokens=4096)
         >>> extract_thinking_config_from_anthropic(request)
         ThinkingConfig(enabled=True, budget_tokens=None)
-        
+
         >>> # Explicitly disabled
         >>> request.thinking = {"type": "disabled"}
         >>> extract_thinking_config_from_anthropic(request)
         ThinkingConfig(enabled=False, budget_tokens=None)
-        
+
         >>> # Enabled with custom budget
         >>> request.thinking = {"type": "enabled", "budget_tokens": 8000}
         >>> extract_thinking_config_from_anthropic(request)
         ThinkingConfig(enabled=True, budget_tokens=8000)
     """
+    output_config = getattr(request, "output_config", None)
+    if (request.thinking and request.thinking.get("type") == "adaptive") or (
+        isinstance(output_config, dict) and "effort" in output_config
+    ):
+        native_fields = {}
+        if request.thinking is not None:
+            native_fields["thinking"] = request.thinking
+        if output_config is not None:
+            native_fields["output_config"] = output_config
+        logger.debug("Forwarding native Anthropic reasoning configuration to Kiro")
+        return ThinkingConfig(native_fields=native_fields)
+
     if not request.thinking:
         # No thinking specified → use defaults
         return ThinkingConfig(enabled=True, budget_tokens=None)
-    
+
     if not isinstance(request.thinking, dict):
         # Invalid format → use defaults
         return ThinkingConfig(enabled=True, budget_tokens=None)
-    
+
     thinking_type = request.thinking.get("type")
-    
+
     if thinking_type == "disabled":
         # Explicitly disabled
         return ThinkingConfig(enabled=False, budget_tokens=None)
-    
+
     if thinking_type == "enabled":
         # Extract budget_tokens
         budget = request.thinking.get("budget_tokens")
         if budget:
-            logger.debug(f"Extracted thinking config from Anthropic: type='enabled', budget={budget}")
+            logger.debug(
+                f"Extracted thinking config from Anthropic: type='enabled', budget={budget}"
+            )
         return ThinkingConfig(enabled=True, budget_tokens=budget)
-    
+
     # Unknown type → use defaults
     return ThinkingConfig(enabled=True, budget_tokens=None)
 

@@ -598,16 +598,16 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="my-super-secret-password-123"  # .env의 PROXY_API_KEY
+    api_key="my-super-secret-password-123",  # .env의 PROXY_API_KEY
 )
 
 response = client.chat.completions.create(
     model="claude-sonnet-4-5",
     messages=[
         {"role": "system", "content": "당신은 도움이 되는 어시스턴트입니다."},
-        {"role": "user", "content": "안녕하세요!"}
+        {"role": "user", "content": "안녕하세요!"},
     ],
-    stream=True
+    stream=True,
 )
 
 for chunk in response:
@@ -626,7 +626,7 @@ from langchain_openai import ChatOpenAI
 llm = ChatOpenAI(
     base_url="http://localhost:8000/v1",
     api_key="my-super-secret-password-123",  # .env의 PROXY_API_KEY
-    model="claude-sonnet-4-5"
+    model="claude-sonnet-4-5",
 )
 
 response = llm.invoke("안녕하세요, 어떻게 지내세요?")
@@ -702,14 +702,14 @@ import anthropic
 
 client = anthropic.Anthropic(
     api_key="my-super-secret-password-123",  # .env의 PROXY_API_KEY
-    base_url="http://localhost:8000"
+    base_url="http://localhost:8000",
 )
 
 # 비스트리밍
 response = client.messages.create(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "안녕하세요!"}]
+    messages=[{"role": "user", "content": "안녕하세요!"}],
 )
 print(response.content[0].text)
 
@@ -717,7 +717,7 @@ print(response.content[0].text)
 with client.messages.stream(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "안녕하세요!"}]
+    messages=[{"role": "user", "content": "안녕하세요!"}],
 ) as stream:
     for text in stream.text_stream:
         print(text, end="", flush=True)

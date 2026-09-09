@@ -229,7 +229,7 @@ kiro-gateway/
 auth_manager = KiroAuthManager(
     refresh_token="your_token",
     region="us-east-1",
-    creds_file="~/.aws/sso/cache/kiro-auth-token.json"
+    creds_file="~/.aws/sso/cache/kiro-auth-token.json",
 )
 token = await auth_manager.get_access_token()
 ```
@@ -743,6 +743,7 @@ data: [DONE]
    ```python
    class GeminiRequest(BaseModel):
        """Pydantic модель запроса Gemini."""
+
        contents: List[GeminiContent]
        ...
    ```
@@ -780,15 +781,16 @@ data: [DONE]
 4. **Создать роуты** — `routes_gemini.py`
    ```python
    router = APIRouter()
-   
+
+
    @router.post("/v1beta/models/{model}:generateContent")
-   async def generate_content(request: GeminiRequest):
-       ...
+   async def generate_content(request: GeminiRequest): ...
    ```
 
 5. **Подключить в main.py**
    ```python
    from kiro.routes_gemini import router as gemini_router
+
    app.include_router(gemini_router)
    ```
 
