@@ -13,6 +13,8 @@ Comprehensive tests for all Anthropic API models:
 """
 
 import pytest
+from copy import deepcopy
+from typing import Any
 from pydantic import ValidationError
 
 from kiro.models_anthropic import (
@@ -38,6 +40,7 @@ from kiro.models_anthropic import (
     # Request models
     SystemContentBlock,
     AnthropicMessagesRequest,
+    AnthropicCountTokensRequest,
     # Response models
     AnthropicUsage,
     AnthropicMessagesResponse,
@@ -58,6 +61,63 @@ from kiro.models_anthropic import (
     AnthropicErrorDetail,
     AnthropicErrorResponse,
 )
+
+
+class TestEmbeddedSystemMessages:
+    """Exercise client compatibility without weakening conversation validation."""
+
+    @pytest.mark.parametrize("request_type", [AnthropicMessagesRequest, AnthropicCountTokensRequest])
+    @pytest.mark.parametrize("system", [None, "Original", [{"type": "text", "text": "Original"}]])
+    def test_normalizes_without_mutating_input(self, request_type: Any, system: Any) -> None:
+        """Preserve prompt order, cache metadata, tool results, and input data."""
+        cached = {"type": "text", "text": "Second", "cache_control": {"type": "ephemeral"}}
+        data = {
+            "model": "test-model", "max_tokens": 32, "system": system,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "system", "content": "First"},
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "test", "input": {}}]},
+                {"role": "system", "content": [cached]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "Done"}]},
+            ],
+        }
+        original = deepcopy(data)
+        request = request_type.model_validate(data)
+        blocks = request.model_dump(exclude_none=True)["system"]
+        expected = (["Original"] if system is not None else []) + ["First", "Second"]
+        assert [block["text"] for block in blocks] == expected
+        assert blocks[-1] == cached
+        assert [message.role for message in request.messages] == ["user", "assistant", "user"]
+        assert request.messages[-1].content[0].tool_use_id == "t"
+        assert data == original
+        assert request_type.model_validate(request.model_dump()) == request
+
+    @pytest.mark.parametrize("content", [None, 123, {}, [{"type": "image", "source": {}}], [{"type": "text"}]])
+    @pytest.mark.parametrize("request_type", [AnthropicMessagesRequest, AnthropicCountTokensRequest])
+    def test_rejects_invalid_system_content(self, content: Any, request_type: Any) -> None:
+        """Reject malformed or non-text system content instead of dropping it."""
+        with pytest.raises(ValidationError):
+            request_type.model_validate({
+                "model": "test", "max_tokens": 32,
+                "messages": [{"role": "system", "content": content}, {"role": "user", "content": "Hi"}],
+            })
+
+    @pytest.mark.parametrize("request_type", [AnthropicMessagesRequest, AnthropicCountTokensRequest])
+    def test_rejects_system_only_request(self, request_type: Any) -> None:
+        """Require conversation content after extracting system instructions."""
+        with pytest.raises(ValidationError, match="at least one user or assistant"):
+            request_type.model_validate({"model": "test", "max_tokens": 32, "messages": [{"role": "system", "content": "Hi"}]})
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("content", ["", [], "Instructions"])
+    def test_conversion_matches_standard_request(self, stream: bool, content: Any) -> None:
+        """Both response modes produce the same Kiro payload as standard input."""
+        from kiro.converters_anthropic import anthropic_to_kiro
+
+        data = {"model": "test", "max_tokens": 32, "stream": stream, "messages": [{"role": "user", "content": "Hi"}]}
+        standard = AnthropicMessagesRequest.model_validate({**data, "system": content})
+        embedded = AnthropicMessagesRequest.model_validate({**data, "messages": [*data["messages"], {"role": "system", "content": content}]})
+        assert anthropic_to_kiro(embedded, "conversation", "profile") == anthropic_to_kiro(standard, "conversation", "profile")
 
 
 # Base64 1x1 pixel JPEG for testing

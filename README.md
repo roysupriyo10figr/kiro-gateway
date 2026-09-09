@@ -672,7 +672,7 @@ curl http://localhost:8000/v1/messages \
   }'
 ```
 
-> **Note:** In Anthropic API, `system` is a separate field, not a message.
+> **Note:** In Anthropic API, `system` is a separate field, not a message. For client compatibility (including Claude Code requests with embedded system messages), the gateway also accepts `role: "system"` text messages and moves their text blocks into the top-level `system` field, after any existing system prompt and in encounter order. This applies to streaming, non-streaming, and token counting. Cache metadata is preserved during normalization. Embedded system messages must contain text, and at least one user or assistant message must remain. OpenAI requests already support system messages natively.
 
 </details>
 
