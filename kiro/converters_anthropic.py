@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from kiro.config import HIDDEN_MODELS
+from kiro.prompt_cache import requests_cache
 from kiro.model_resolver import get_model_id_for_kiro
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
@@ -84,7 +85,7 @@ def extract_system_prompt(system: Any) -> str:
     2. List of content blocks: [{"type": "text", "text": "...", "cache_control": {...}}]
 
     The second format is used for prompt caching with cache_control.
-    We extract only the text, ignoring cache_control (not supported by Kiro).
+    Text is extracted here; cache intent is handled separately by the adapter.
 
     Args:
         system: System prompt in string or list format
@@ -323,6 +324,7 @@ def convert_anthropic_messages(
             tool_calls=tool_calls if tool_calls else None,
             tool_results=tool_results if tool_results else None,
             images=images if images else None,
+            cache_point=requests_cache(msg),
         )
         unified_messages.append(unified_msg)
 
@@ -364,7 +366,12 @@ def convert_anthropic_tools(
             input_schema = tool.input_schema
 
         unified_tools.append(
-            UnifiedTool(name=name, description=description, input_schema=input_schema)
+            UnifiedTool(
+                name=name,
+                description=description,
+                input_schema=input_schema,
+                cache_point=requests_cache(tool),
+            )
         )
 
     return unified_tools if unified_tools else None
@@ -469,6 +476,12 @@ def anthropic_to_kiro(
     """
     # Convert messages to unified format
     unified_messages = convert_anthropic_messages(request.messages)
+    if unified_messages and requests_cache(request.system):
+        unified_messages[0].cache_point = True
+    if unified_messages and requests_cache(
+        {"cache_control": getattr(request, "cache_control", None)}
+    ):
+        unified_messages[-1].cache_point = True
 
     # Convert tools to unified format
     unified_tools = convert_anthropic_tools(request.tools)

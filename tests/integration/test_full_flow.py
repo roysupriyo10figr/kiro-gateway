@@ -41,14 +41,14 @@ class TestNativeReasoningFlow:
             )
             payload = anthropic_to_kiro(request, "test", "profile")
             if model == "claude-opus-5":
-                assert payload["additionalModelRequestFields"]["thinking"] == {"type": "adaptive"}
+                assert payload["additionalModelRequestFields"]["thinking"] == {
+                    "type": "adaptive"
+                }
         else:
             request = ChatCompletionRequest(**common, reasoning_effort="max")
             payload = build_kiro_payload(request, "test", "profile")
         effort_key = "reasoning" if model == "gpt-5.6-sol" else "output_config"
-        assert payload["additionalModelRequestFields"][effort_key] == {
-            "effort": "max"
-        }
+        assert payload["additionalModelRequestFields"][effort_key] == {"effort": "max"}
         assert (
             "<thinking_mode>"
             not in payload["conversationState"]["currentMessage"]["userInputMessage"][
@@ -75,7 +75,9 @@ class TestNativeReasoningFlow:
             for chunk in [
                 b'{"te',
                 b'xt":"reason"}',
-                b'{"signature":"signed","text":"reason"}' if combined else b'{"text":"reason"}{"signature":"signed"}',
+                b'{"signature":"signed","text":"reason"}'
+                if combined
+                else b'{"text":"reason"}{"signature":"signed"}',
                 b'{"content":"Answer"}',
             ]:
                 yield chunk

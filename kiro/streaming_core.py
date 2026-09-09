@@ -31,6 +31,8 @@ to convert Kiro events to their respective SSE formats.
 """
 
 import asyncio
+import time
+from kiro.utils import get_upstream_request_id
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -162,7 +164,8 @@ async def parse_kiro_stream(
     Raises:
         FirstTokenTimeoutError: If first token not received within timeout
     """
-    parser = AwsEventStreamParser()
+    request_id = get_upstream_request_id(response.headers)
+    parser = AwsEventStreamParser(request_id=request_id)
     first_token_received = False
 
     # Initialize thinking parser if fake reasoning is enabled
@@ -180,10 +183,15 @@ async def parse_kiro_stream(
         # Wait for first chunk with timeout
         try:
             logger.debug(f"Waiting for first token (timeout={first_token_timeout}s)...")
+            first_byte_started = time.monotonic()
             first_byte_chunk = await asyncio.wait_for(
                 byte_iterator.__anext__(), timeout=first_token_timeout
             )
-            logger.debug("First token received")
+            logger.info(
+                "Kiro first bytes request_id={} wait_seconds={:.3f}",
+                request_id,
+                time.monotonic() - first_byte_started,
+            )
         except asyncio.TimeoutError:
             logger.warning(
                 f"[FirstTokenTimeout] Model did not respond within {first_token_timeout}s"

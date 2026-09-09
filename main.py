@@ -721,6 +721,17 @@ if __name__ == "__main__":
     # Parse CLI arguments first (handles --version, --help without requiring config)
     args = parse_cli_args()
 
+    if KIRO_CLI_DB_FILE or os.getenv("KIRO_SSO_START_URL"):
+        from kiro.sso_login import ensure_sso_login
+
+        try:
+            ensure_sso_login(
+                os.getenv("KIRO_SSO_START_URL"), os.getenv("KIRO_SSO_REGION", REGION)
+            )
+        except RuntimeError as exc:
+            logger.error(str(exc))
+            raise SystemExit(1) from exc
+
     # Run configuration validation before starting server
     validate_configuration()
 

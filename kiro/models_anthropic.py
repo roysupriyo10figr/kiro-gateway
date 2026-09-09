@@ -47,6 +47,8 @@ class TextContentBlock(BaseModel):
     type: Literal["text"] = "text"
     text: str
 
+    model_config = {"extra": "allow"}
+
 
 class ThinkingContentBlock(BaseModel):
     """
@@ -77,6 +79,8 @@ class ToolUseContentBlock(BaseModel):
     id: str
     name: str
     input: Dict[str, Any]
+
+    model_config = {"extra": "allow"}
 
 
 class ToolReferenceContentBlock(BaseModel):
@@ -168,6 +172,8 @@ class ImageContentBlock(BaseModel):
 
     type: Literal["image"] = "image"
     source: Union[Base64ImageSource, URLImageSource]
+
+    model_config = {"extra": "allow"}
 
 
 # Union type for all content blocks (including images and thinking)

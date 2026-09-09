@@ -32,6 +32,7 @@ with connection pooling for better resource management.
 
 import asyncio
 import json
+import time
 from typing import Optional
 
 import httpx
@@ -45,7 +46,7 @@ from kiro.config import (
     STREAMING_READ_TIMEOUT,
 )
 from kiro.auth import KiroAuthManager
-from kiro.utils import get_kiro_headers
+from kiro.utils import get_kiro_headers, get_upstream_request_id
 from kiro.network_errors import (
     classify_network_error,
     get_short_error_message,
@@ -222,6 +223,7 @@ class KiroHttpClient:
         )
 
         for attempt in range(max_retries):
+            attempt_started = time.monotonic()
             try:
                 # Get current token
                 token = await self.auth_manager.get_access_token()
@@ -246,6 +248,14 @@ class KiroHttpClient:
                     logger.debug("Sending request to Kiro API...")
                     response = await client.request(method, url, **request_kwargs)
 
+                logger.info(
+                    "Kiro HTTP request_id={} status={} attempt={} elapsed_seconds={:.3f} streaming={}",
+                    get_upstream_request_id(response.headers),
+                    response.status_code,
+                    attempt + 1,
+                    time.monotonic() - attempt_started,
+                    stream,
+                )
                 # Check status
                 if response.status_code == 200:
                     return response

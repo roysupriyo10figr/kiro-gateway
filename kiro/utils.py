@@ -27,12 +27,28 @@ and other common utilities.
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, List, Dict, Any
 
 from loguru import logger
 
 if TYPE_CHECKING:
     from kiro.auth import KiroAuthManager
+
+
+def get_upstream_request_id(headers: Any) -> str:
+    """Read an optional request identifier without logging other headers.
+
+    Args:
+        headers: Upstream header mapping, when available.
+
+    Returns:
+        Request ID string or an explicit unknown marker.
+    """
+    if not isinstance(headers, Mapping):
+        return "unknown"
+    value = headers.get("x-amzn-requestid") or headers.get("x-amz-request-id")
+    return value if isinstance(value, str) and value else "unknown"
 
 
 def get_machine_fingerprint() -> str:

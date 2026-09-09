@@ -122,10 +122,16 @@ def _extract_cache_usage_fields(usage: Optional[Dict[str, Any]]) -> Dict[str, in
         "cacheReadInputTokens": "cache_read_input_tokens",
         "cache_creation_input_tokens": "cache_creation_input_tokens",
         "cacheCreationInputTokens": "cache_creation_input_tokens",
+        "cacheWriteInputTokens": "cache_creation_input_tokens",
+        "cache_write_input_tokens": "cache_creation_input_tokens",
     }
     for source_key, target_key in key_map.items():
         value = usage.get(source_key)
-        if isinstance(value, (int, float)):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ):
             extracted[target_key] = int(value)
 
     return extracted
@@ -317,7 +323,10 @@ async def stream_kiro_to_anthropic(
                         if text_block_started and text_block_index is not None:
                             yield format_sse_event(
                                 "content_block_stop",
-                                {"type": "content_block_stop", "index": text_block_index},
+                                {
+                                    "type": "content_block_stop",
+                                    "index": text_block_index,
+                                },
                             )
                             text_block_started = False
                             current_block_index += 1

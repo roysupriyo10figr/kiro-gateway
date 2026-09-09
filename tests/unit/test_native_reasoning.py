@@ -13,25 +13,32 @@ def test_sol_effort_mapping_preserves_input(effort: str) -> None:
     """All verified effort values survive translation without input mutation."""
     fields = {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
     original = deepcopy(fields)
-    assert native_reasoning_fields("gpt-5.6-sol", fields, True, None) == {"reasoning": {"effort": effort}}
+    assert native_reasoning_fields("gpt-5.6-sol", fields, True, None) == {
+        "reasoning": {"effort": effort}
+    }
     assert fields == original
 
 
 def test_sol_defaults_and_disable() -> None:
     """Defaults bypass fake instructions; disabling reasoning is explicit."""
     assert native_reasoning_fields("gpt-5.6-sol", None, True, None) == {}
-    assert native_reasoning_fields("gpt-5.6-sol", None, False, None) == {"reasoning": {"effort": "none"}}
+    assert native_reasoning_fields("gpt-5.6-sol", None, False, None) == {
+        "reasoning": {"effort": "none"}
+    }
 
 
-@pytest.mark.parametrize("fields", [
-    {"thinking": {"type": "enabled", "budget_tokens": 4000}},
-    {"thinking": {"type": "disabled"}, "output_config": {"effort": "max"}},
-    {"thinking": "adaptive"},
-    {"output_config": "max"},
-    {"output_config": {"format": {}}},
-    {"thinking": {"type": "unknown"}},
-    {"unknown": True},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"thinking": {"type": "enabled", "budget_tokens": 4000}},
+        {"thinking": {"type": "disabled"}, "output_config": {"effort": "max"}},
+        {"thinking": "adaptive"},
+        {"output_config": "max"},
+        {"output_config": {"format": {}}},
+        {"thinking": {"type": "unknown"}},
+        {"unknown": True},
+    ],
+)
 def test_sol_rejects_unrepresentable_controls(fields: Any) -> None:
     """Unsupported fields and contradictory controls cannot be silently dropped."""
     with pytest.raises(ValueError):

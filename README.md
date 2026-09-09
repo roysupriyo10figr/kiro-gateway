@@ -116,6 +116,22 @@ API key. The rest of the gateway settings use their built-in defaults.
 
 ## 5. Start the gateway
 
+Standalone server startup checks SSO automatically when `KIRO_CLI_DB_FILE` is
+configured. It skips login when `kiro-cli whoami`
+succeeds, otherwise waits for login to complete and checks again before starting.
+Set `KIRO_SSO_START_URL` and `KIRO_SSO_REGION` in the launching environment to
+provide your organization's details automatically. Gateway flags are forwarded:
+
+```sh
+KIRO_SSO_START_URL="https://YOUR-ORGANIZATION.awsapps.com/start" \
+KIRO_SSO_REGION="us-east-1" \
+  uv run --with-requirements requirements.txt python main.py --host 127.0.0.1 --port 8000
+```
+
+The CLI login check reports local sign-in state, not a live authorization test.
+The gateway handles normal token refresh; if a saved session has been revoked,
+run `kiro-cli login` again to renew it.
+
 ```sh
 cd "$HOME/developer/misc/kiro-gateway"
 uv run --with-requirements requirements.txt python main.py
@@ -255,6 +271,32 @@ the client to reach port 8000. Tailscale encrypts traffic between the devices;
 the gateway still requires its password.
 
 ## Troubleshooting
+
+### Prompt caching and credit usage
+
+The gateway translates explicit `cache_control: {"type": "ephemeral"}` markers
+into Kiro `cachePoint` objects for messages and tools. OpenAI-compatible clients
+can supply the same extension on messages or tools. Both APIs and response modes
+share the translation. Standard OpenAI requests without markers retain Kiro's
+automatic behavior.
+
+Kiro's available checkpoint boundaries are coarser than Anthropic content blocks:
+a block checkpoint applies at the enclosing message boundary, and system markers
+apply at the first message containing the merged system prompt. Adjacent-message
+merging can extend that boundary. At most four recent checkpoints are emitted;
+only excess cache markers are removed, never prompt content. Requested TTLs are
+not guaranteed because Kiro controls cache lifetime. Set `KIRO_PROMPT_CACHE=false`
+to disable gateway-added checkpoints; this does not disable Kiro's own caching.
+
+Client beta headers are not blindly forwarded to Kiro's different API. Missing
+cache token counters mean **unknown**, not proof of a cache miss. Do not infer
+credit savings from estimated token counts alone.
+
+Normal logs include upstream request IDs, HTTP attempt counts, header latency,
+first-byte wait time, and metered credit usage. `LOG_LEVEL=DEBUG` also includes
+checkpoint fingerprints without prompt text or credentials. Compare actual
+credits for repeated prefixes and check retries before diagnosing an efficiency
+regression. See [the cache verification notes](docs/cache-verification.md).
 
 ### Reasoning and streaming
 

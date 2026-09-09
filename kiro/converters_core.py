@@ -46,6 +46,7 @@ from kiro.config import (
 )
 from kiro.payload_guards import check_payload_size, trim_payload_to_limit
 from kiro.native_reasoning import native_reasoning_fields
+from kiro.prompt_cache import finalize_cache_points
 
 
 # ==================================================================================================
@@ -98,6 +99,7 @@ class UnifiedMessage:
         content: Text content or list of content blocks
         tool_calls: List of tool calls (for assistant messages)
         tool_results: List of tool results (for user messages with tool responses)
+        cache_point: Whether client caching is requested through this message.
         images: List of images in unified format (for multimodal user messages)
                 Format: [{"media_type": "image/jpeg", "data": "base64..."}]
     """
@@ -107,6 +109,7 @@ class UnifiedMessage:
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_results: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[Dict[str, Any]]] = None
+    cache_point: bool = False
 
 
 @dataclass
@@ -118,11 +121,13 @@ class UnifiedTool:
         name: Tool name
         description: Tool description
         input_schema: JSON Schema for tool parameters
+        cache_point: Whether the client requests caching through this tool.
     """
 
     name: str
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
+    cache_point: bool = False
 
 
 @dataclass
@@ -558,6 +563,7 @@ def process_tools_with_long_descriptions(
                 name=tool.name,
                 description=reference_description,
                 input_schema=tool.input_schema,
+                cache_point=tool.cache_point,
             )
             processed_tools.append(processed_tool)
 
@@ -653,6 +659,9 @@ def convert_tools_to_kiro_format(
                 }
             }
         )
+
+        if tool.cache_point:
+            kiro_tools.append({"cachePoint": {}})
 
     return kiro_tools
 
@@ -1019,6 +1028,7 @@ def strip_all_tool_content(
                 tool_calls=None,
                 tool_results=None,
                 images=msg.images,
+                cache_point=msg.cache_point,
             )
             result.append(cleaned_msg)
         else:
@@ -1102,6 +1112,7 @@ def ensure_assistant_before_tool_results(
                     tool_calls=msg.tool_calls,
                     tool_results=None,  # Remove orphaned tool_results (now in text)
                     images=msg.images,
+                    cache_point=msg.cache_point,
                 )
                 result.append(cleaned_msg)
                 converted_any_tool_results = True
@@ -1141,6 +1152,7 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
 
         last = merged[-1]
         if msg.role == last.role:
+            last.cache_point = last.cache_point or msg.cache_point
             # Merge content
             if isinstance(last.content, list) and isinstance(msg.content, list):
                 last.content = last.content + msg.content
@@ -1293,6 +1305,7 @@ def normalize_message_roles(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 tool_calls=msg.tool_calls,
                 tool_results=msg.tool_results,
                 images=msg.images,
+                cache_point=msg.cache_point,
             )
             normalized.append(normalized_msg)
             converted_count += 1
@@ -1435,6 +1448,8 @@ def build_kiro_history(
             if user_input_context:
                 user_input["userInputMessageContext"] = user_input_context
 
+            if msg.cache_point:
+                user_input["cachePoint"] = {}
             history.append({"userInputMessage": user_input})
 
         elif msg.role == "assistant":
@@ -1451,6 +1466,8 @@ def build_kiro_history(
             if tool_uses:
                 assistant_response["toolUses"] = tool_uses
 
+            if msg.cache_point:
+                assistant_response["cachePoint"] = {}
             history.append({"assistantResponseMessage": assistant_response})
 
     return history
@@ -1491,10 +1508,15 @@ def build_kiro_payload(
     Raises:
         ValueError: If there are no messages to send
     """
-    thinking_config = replace(thinking_config, native_fields=native_reasoning_fields(
-        model_id, thinking_config.native_fields,
-        thinking_config.enabled, thinking_config.budget_tokens,
-    ))
+    thinking_config = replace(
+        thinking_config,
+        native_fields=native_reasoning_fields(
+            model_id,
+            thinking_config.native_fields,
+            thinking_config.enabled,
+            thinking_config.budget_tokens,
+        ),
+    )
 
     # Process tools with long descriptions
     processed_tools, tool_documentation = process_tools_with_long_descriptions(tools)
@@ -1664,6 +1686,14 @@ def build_kiro_payload(
     if profile_arn:
         payload["profileArn"] = profile_arn
 
+    if thinking_config.native_fields is not None:
+        payload["additionalModelRequestFields"] = thinking_config.native_fields
+    if current_message.cache_point:
+        payload["conversationState"]["currentMessage"]["userInputMessage"][
+            "cachePoint"
+        ] = {}
+    finalize_cache_points(payload)
+
     # Payload size guard — auto-trim if enabled
     if AUTO_TRIM_PAYLOAD:
         payload_size = check_payload_size(payload)
@@ -1673,8 +1703,5 @@ def build_kiro_payload(
                 f"Trimmed conversation history: {stats.original_entries} -> {stats.final_entries} messages "
                 f"({stats.original_bytes} -> {stats.final_bytes} bytes)"
             )
-
-    if thinking_config.native_fields is not None:
-        payload["additionalModelRequestFields"] = thinking_config.native_fields
 
     return KiroPayloadResult(payload=payload, tool_documentation=tool_documentation)

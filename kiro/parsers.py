@@ -250,11 +250,17 @@ class AwsEventStreamParser:
         ('{"stop":', "tool_stop"),
         ('{"followupPrompt":', "followup"),
         ('{"usage":', "usage"),
+        ('{"unit":', "metering"),
         ('{"contextUsagePercentage":', "context_usage"),
     ]
 
-    def __init__(self):
-        """Initializes the parser."""
+    def __init__(self, request_id: str = "unknown") -> None:
+        """Initialize stream state.
+
+        Args:
+            request_id: Upstream request identifier for metering diagnostics.
+        """
+        self.request_id = request_id
         self.buffer = ""
         self.last_content: Optional[str] = None  # For deduplicating repeating content
         self.current_tool_call: Optional[Dict[str, Any]] = None
@@ -307,7 +313,11 @@ class AwsEventStreamParser:
                     events.append(event)
                 # Sol can return reasoning text and signature in the same event.
                 if earliest_type in ("thinking", "thinking_signature"):
-                    other_type = "thinking_signature" if earliest_type == "thinking" else "thinking"
+                    other_type = (
+                        "thinking_signature"
+                        if earliest_type == "thinking"
+                        else "thinking"
+                    )
                     other = self._process_event(data, other_type)
                     if other:
                         if other_type == "thinking":
@@ -344,6 +354,20 @@ class AwsEventStreamParser:
             return self._process_tool_input_event(data)
         elif event_type == "tool_stop":
             return self._process_tool_stop_event(data)
+        elif event_type == "metering" or (event_type == "usage" and "unit" in data):
+            value = data.get("usage")
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                logger.info(
+                    "Kiro metered request_id={} usage={} unit={}",
+                    self.request_id,
+                    value,
+                    data.get("unit", "unknown"),
+                )
+            return {"type": "metering", "data": data}
         elif event_type == "usage":
             return {"type": "usage", "data": data.get("usage", 0)}
         elif event_type == "context_usage":

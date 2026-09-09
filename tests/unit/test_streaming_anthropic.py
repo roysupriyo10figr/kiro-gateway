@@ -61,32 +61,49 @@ def mock_response():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sequence", [
-    ["content", "thinking"],
-    ["content", "thinking", "content"],
-    ["thinking", "content", "thinking", "content"],
-    ["content", "thinking", "thinking", "content"],
-])
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        ["content", "thinking"],
+        ["content", "thinking", "content"],
+        ["thinking", "content", "thinking", "content"],
+        ["content", "thinking", "thinking", "content"],
+    ],
+)
 async def test_interleaved_text_and_thinking_have_unique_block_indices(
-    sequence: list[str], mock_response: AsyncMock,
-    mock_model_cache: MagicMock, mock_auth_manager: MagicMock,
+    sequence: list[str],
+    mock_response: AsyncMock,
+    mock_model_cache: MagicMock,
+    mock_auth_manager: MagicMock,
 ) -> None:
     """Late reasoning must not overwrite answer blocks in Anthropic clients."""
     from typing import AsyncGenerator
 
-    async def source(*args: object, **kwargs: object) -> AsyncGenerator[KiroEvent, None]:
+    async def source(
+        *args: object, **kwargs: object
+    ) -> AsyncGenerator[KiroEvent, None]:
         yield KiroEvent(type="content", content="")
         for kind in sequence:
             if kind == "content":
                 yield KiroEvent(type=kind, content="answer")
             else:
-                yield KiroEvent(type=kind, thinking_content="reason", native_thinking=True)
+                yield KiroEvent(
+                    type=kind, thinking_content="reason", native_thinking=True
+                )
 
     with patch("kiro.streaming_anthropic.parse_kiro_stream", source):
-        chunks = [chunk async for chunk in stream_kiro_to_anthropic(
-            mock_response, "gpt-5.6-sol", mock_model_cache, mock_auth_manager
-        )]
-    events = [json.loads(line[6:]) for chunk in chunks for line in chunk.splitlines() if line.startswith("data: ")]
+        chunks = [
+            chunk
+            async for chunk in stream_kiro_to_anthropic(
+                mock_response, "gpt-5.6-sol", mock_model_cache, mock_auth_manager
+            )
+        ]
+    events = [
+        json.loads(line[6:])
+        for chunk in chunks
+        for line in chunk.splitlines()
+        if line.startswith("data: ")
+    ]
     active = None
     blocks = {}
     for event in events:
@@ -111,8 +128,31 @@ async def test_interleaved_text_and_thinking_have_unique_block_indices(
             active = None
     assert active is None
     assert list(blocks.values())[-1]["type"] == "text"
-    assert "".join(b["value"] for b in blocks.values() if b["type"] == "text") == "answer" * sequence.count("content")
-    assert "".join(b["value"] for b in blocks.values() if b["type"] == "thinking") == "reason" * sequence.count("thinking")
+    assert "".join(
+        b["value"] for b in blocks.values() if b["type"] == "text"
+    ) == "answer" * sequence.count("content")
+    assert "".join(
+        b["value"] for b in blocks.values() if b["type"] == "thinking"
+    ) == "reason" * sequence.count("thinking")
+
+
+@pytest.mark.parametrize("key", ["cacheWriteInputTokens", "cache_write_input_tokens"])
+def test_native_cache_write_aliases(key: str) -> None:
+    """Native cache-write counters translate without fabricated estimates."""
+    from kiro.streaming_anthropic import _extract_cache_usage_fields
+
+    assert _extract_cache_usage_fields({key: 123}) == {
+        "cache_creation_input_tokens": 123
+    }
+    assert _extract_cache_usage_fields({"unit": "credit", "usage": 0.2}) == {}
+
+
+@pytest.mark.parametrize("value", [True, -1, "123", None])
+def test_invalid_cache_counts_not_reported(value: object) -> None:
+    """Malformed values cannot become reported cache hits."""
+    from kiro.streaming_anthropic import _extract_cache_usage_fields
+
+    assert _extract_cache_usage_fields({"cacheReadInputTokens": value}) == {}
 
 
 class TestGenerateMessageId:

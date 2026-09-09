@@ -34,16 +34,26 @@ def native_reasoning_fields(
     if not isinstance(thinking, dict) or not isinstance(output, dict):
         raise ValueError("Sol thinking and output_config must be objects")
     if set(controls) - {"thinking", "output_config"} or set(output) - {"effort"}:
-        raise ValueError("Sol supports output_config.effort, not other Claude output controls")
+        raise ValueError(
+            "Sol supports output_config.effort, not other Claude output controls"
+        )
     if "budget_tokens" in thinking or (fields is None and budget_tokens is not None):
-        raise ValueError("Sol uses effort levels, not budget_tokens; use adaptive thinking and output_config.effort")
-    if set(thinking) - {"type"} or thinking.get("type") not in (None, "adaptive", "disabled"):
+        raise ValueError(
+            "Sol uses effort levels, not budget_tokens; use adaptive thinking and output_config.effort"
+        )
+    if set(thinking) - {"type"} or thinking.get("type") not in (
+        None,
+        "adaptive",
+        "disabled",
+    ):
         raise ValueError("For Sol, use thinking.type adaptive or disabled")
 
     effort = output.get("effort")
     if not enabled or thinking.get("type") == "disabled":
         if effort not in (None, "none"):
-            raise ValueError("Sol thinking is disabled but effort is enabled; use adaptive thinking or effort none")
+            raise ValueError(
+                "Sol thinking is disabled but effort is enabled; use adaptive thinking or effort none"
+            )
         effort = "none"
     logger.debug("Using Sol native reasoning.effort configuration")
     # An empty native configuration also bypasses Claude-specific prompt injection.

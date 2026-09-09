@@ -15,6 +15,25 @@ from kiro.parsers import (
 )
 
 
+@pytest.mark.parametrize(
+    "wire",
+    [
+        b'{"unit":"credit","unitPlural":"credits","usage":0.25}',
+        b'{"usage":0.25,"unit":"credit","unitPlural":"credits"}',
+    ],
+)
+def test_credit_metering_is_not_token_usage(wire: bytes) -> None:
+    """Retain actual metering without misrepresenting credits as token counts."""
+    parser = AwsEventStreamParser(request_id="test-request")
+    events = parser.feed(wire[:12]) + parser.feed(wire[12:])
+    assert events == [
+        {
+            "type": "metering",
+            "data": {"unit": "credit", "unitPlural": "credits", "usage": 0.25},
+        }
+    ]
+
+
 class TestFindMatchingBrace:
     """Tests for find_matching_brace function."""
 

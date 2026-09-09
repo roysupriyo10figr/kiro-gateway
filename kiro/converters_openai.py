@@ -32,6 +32,7 @@ Contains functions for:
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from kiro.prompt_cache import requests_cache
 
 from kiro.config import HIDDEN_MODELS
 from kiro.model_resolver import get_model_id_for_kiro
@@ -177,12 +178,14 @@ def convert_openai_messages_to_unified(
     processed = []
     pending_tool_results = []
     pending_tool_images = []
+    pending_tool_cache = False
     total_tool_calls = 0
     total_tool_results = 0
     total_images = 0
 
     for msg in non_system_messages:
         if msg.role == "tool":
+            pending_tool_cache = pending_tool_cache or requests_cache(msg)
             # Collect tool results
             tool_result = {
                 "type": "tool_result",
@@ -205,10 +208,12 @@ def convert_openai_messages_to_unified(
                     content="",
                     tool_results=pending_tool_results.copy(),
                     images=pending_tool_images.copy() if pending_tool_images else None,
+                    cache_point=pending_tool_cache,
                 )
                 processed.append(unified_msg)
                 pending_tool_results.clear()
                 pending_tool_images.clear()
+                pending_tool_cache = False
 
             # Convert regular message
             tool_calls = None
@@ -234,6 +239,7 @@ def convert_openai_messages_to_unified(
                 tool_calls=tool_calls,
                 tool_results=tool_results,
                 images=images,
+                cache_point=requests_cache(msg),
             )
             processed.append(unified_msg)
 
@@ -244,6 +250,7 @@ def convert_openai_messages_to_unified(
             content="",
             tool_results=pending_tool_results.copy(),
             images=pending_tool_images.copy() if pending_tool_images else None,
+            cache_point=pending_tool_cache,
         )
         processed.append(unified_msg)
 
@@ -254,6 +261,10 @@ def convert_openai_messages_to_unified(
             f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
         )
 
+    if processed and any(
+        requests_cache(msg) for msg in messages if msg.role == "system"
+    ):
+        processed[0].cache_point = True
     return system_prompt, processed
 
 
@@ -288,6 +299,7 @@ def convert_openai_tools_to_unified(
                     name=tool.function.name,
                     description=tool.function.description,
                     input_schema=tool.function.parameters,
+                    cache_point=requests_cache(tool),
                 )
             )
         # Flat format compatibility (Cursor-style)
@@ -297,6 +309,7 @@ def convert_openai_tools_to_unified(
                     name=tool.name,
                     description=tool.description,
                     input_schema=tool.input_schema,
+                    cache_point=requests_cache(tool),
                 )
             )
         # Skip invalid tools
@@ -433,6 +446,10 @@ def build_kiro_payload(
     system_prompt, unified_messages = convert_openai_messages_to_unified(
         request_data.messages
     )
+    if unified_messages and requests_cache(
+        {"cache_control": getattr(request_data, "cache_control", None)}
+    ):
+        unified_messages[-1].cache_point = True
 
     # Convert tools to unified format
     unified_tools = convert_openai_tools_to_unified(request_data.tools)
