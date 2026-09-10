@@ -232,17 +232,17 @@ class TestConvertOpenAIMessagesToUnified:
         print(f"Result: {unified}")
         print(f"Images: {unified[0].images}")
 
-        assert len(unified) == 1
-        assert unified[0].role == "user"
+        assert len(unified) == 2
+        assert all(message.role == "user" for message in unified)
         assert unified[0].content == "What's in this image?"
 
         print("Checking images field...")
-        assert unified[0].images is not None, "images field should not be None"
-        assert len(unified[0].images) == 1, (
-            f"Expected 1 image, got {len(unified[0].images)}"
+        assert unified[1].images is not None, "image unit must retain the image"
+        assert len(unified[1].images) == 1, (
+            f"Expected 1 image, got {len(unified[1].images)}"
         )
 
-        image = unified[0].images[0]
+        image = unified[1].images[0]
         print(
             f"Comparing image: Expected media_type='image/jpeg', Got '{image.get('media_type')}'"
         )
@@ -283,11 +283,11 @@ class TestConvertOpenAIMessagesToUnified:
         print(f"Result: {unified}")
 
         print("Checking user message has images...")
-        assert unified[0].images is not None
-        assert len(unified[0].images) == 1
+        assert unified[1].images is not None
+        assert len(unified[1].images) == 1
 
         print("Checking assistant message has no images...")
-        assert unified[1].images is None, (
+        assert unified[2].images is None, (
             "Assistant messages should not have images extracted"
         )
 
@@ -333,13 +333,13 @@ class TestConvertOpenAIMessagesToUnified:
             f"Result images count: {len(unified[0].images) if unified[0].images else 0}"
         )
 
-        assert unified[0].images is not None
-        assert len(unified[0].images) == 3, (
-            f"Expected 3 images, got {len(unified[0].images)}"
-        )
+        images = [image for message in unified for image in (message.images or [])]
+        assert len(unified) == 4
+        assert len(images) == 3
+        assert all(image["data"] == test_image_base64 for image in images)
 
         print("Checking image media types...")
-        media_types = [img["media_type"] for img in unified[0].images]
+        media_types = [img["media_type"] for img in images]
         print(f"Media types: {media_types}")
         assert "image/jpeg" in media_types
         assert "image/png" in media_types
@@ -383,8 +383,7 @@ class TestConvertOpenAIMessagesToUnified:
         print(f"Log records: {[r.message for r in caplog.records]}")
 
         # Check that images were extracted
-        assert unified[0].images is not None
-        assert len(unified[0].images) == 2
+        assert sum(len(message.images or []) for message in unified) == 2
 
         # Note: loguru doesn't integrate with caplog by default
         # The function logs "Converted X OpenAI messages: Y tool_calls, Z tool_results, W images"
@@ -788,7 +787,7 @@ class TestBuildKiroPayload:
         current_content = result["conversationState"]["currentMessage"][
             "userInputMessage"
         ]["content"]
-        assert "You are helpful" in current_content
+        assert result["conversationState"]["history"][0]["userInputMessage"]["content"] == "You are helpful"
         assert "Hello" in current_content
 
     def test_builds_history_for_multi_turn(self):
@@ -986,10 +985,11 @@ class TestBuildKiroPayload:
         print(f"Has toolResults: {'toolResults' in context}")
 
         assert "toolResults" in context, "toolResults should be present"
-        assert "<thinking_mode>enabled</thinking_mode>" in content, (
-            "thinking tags SHOULD be injected even with toolResults"
+        prefix = result["conversationState"]["history"][0]["userInputMessage"]["content"]
+        assert "<thinking_mode>enabled</thinking_mode>" in prefix, (
+            "thinking controls belong in the stable prefix, not the changing tool-result tail"
         )
-        assert "<max_thinking_length>4000</max_thinking_length>" in content, (
+        assert "<max_thinking_length>4000</max_thinking_length>" in prefix, (
             "max_thinking_length should be present"
         )
 
@@ -1499,7 +1499,7 @@ class TestBuildKiroPayloadToolCallsIntegration:
         current_content = result["conversationState"]["currentMessage"][
             "userInputMessage"
         ]["content"]
-        assert "You are helpful" in current_content
+        assert result["conversationState"]["history"][0]["userInputMessage"]["content"] == "You are helpful"
         assert "## Tool: long_tool" in current_content
         assert long_desc in current_content
 

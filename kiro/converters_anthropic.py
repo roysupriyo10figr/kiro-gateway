@@ -29,7 +29,9 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from kiro.config import HIDDEN_MODELS
-from kiro.prompt_cache import requests_cache
+from kiro.prompt_cache import requests_cache, cache_translation_enabled, kiro_atomic_ranges
+from kiro.prompt_assembly import CacheDirective, TextSegment, TextPrefixPlan, partition_content, plan_text_prefix
+from kiro.native_reasoning import extract_reasoning_history
 from kiro.model_resolver import get_model_id_for_kiro
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
@@ -112,6 +114,28 @@ def extract_system_prompt(system: Any) -> str:
         return "\n".join(text_parts)
 
     return str(system)
+
+
+def plan_anthropic_system(system: Any) -> TextPrefixPlan:
+    """Project Anthropic system blocks into the shared immutable prefix planner.
+
+    Args:
+        system: Original system text or ordered system blocks.
+
+    Returns:
+        A plan retaining the original text, separators, and cache boundaries.
+    """
+    if isinstance(system, str):
+        return plan_text_prefix((TextSegment(system),))
+    blocks = [block.model_dump(exclude_none=True) if hasattr(block, "model_dump") else block for block in (system or [])]
+    texts = [block for block in blocks if isinstance(block, dict) and block.get("type") == "text"]
+    return plan_text_prefix(
+        TextSegment(
+            ("\n" if index else "") + block.get("text", ""),
+            CacheDirective.parse(block.get("cache_control"), enabled=cache_translation_enabled()),
+        )
+        for index, block in enumerate(texts)
+    )
 
 
 def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, Any]]:
@@ -279,9 +303,19 @@ def convert_anthropic_messages(
     total_tool_results = 0
     total_images = 0
 
-    for msg in messages:
+    expanded_messages = [
+        (msg, segment)
+        for msg in messages
+        for segment in partition_content(
+            msg.content,
+            directive=CacheDirective.parse(getattr(msg, "cache_control", None)),
+            enabled=cache_translation_enabled(),
+            atomic_ranges=kiro_atomic_ranges(msg.content, msg.role),
+        )
+    ]
+    for msg, segment in expanded_messages:
         role = msg.role
-        content = msg.content
+        content = segment.content
 
         # Extract text content
         text_content = convert_anthropic_content_to_text(content)
@@ -324,7 +358,9 @@ def convert_anthropic_messages(
             tool_calls=tool_calls if tool_calls else None,
             tool_results=tool_results if tool_results else None,
             images=images if images else None,
-            cache_point=requests_cache(msg),
+            cache_point=segment.cache_after,
+            preserve_boundary=role != "assistant" or not tool_calls,
+            reasoning_content=extract_reasoning_history(content) if role == "assistant" else None,
         )
         unified_messages.append(unified_msg)
 
@@ -476,8 +512,6 @@ def anthropic_to_kiro(
     """
     # Convert messages to unified format
     unified_messages = convert_anthropic_messages(request.messages)
-    if unified_messages and requests_cache(request.system):
-        unified_messages[0].cache_point = True
     if unified_messages and requests_cache(
         {"cache_control": getattr(request, "cache_control", None)}
     ):
@@ -488,7 +522,8 @@ def anthropic_to_kiro(
 
     # System prompt is already separate in Anthropic format!
     # It can be a string or list of content blocks (for prompt caching)
-    system_prompt = extract_system_prompt(request.system)
+    system_plan = plan_anthropic_system(request.system)
+    system_prompt = system_plan.text
 
     # Get model ID for Kiro API (normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
@@ -513,6 +548,7 @@ def anthropic_to_kiro(
         conversation_id=conversation_id,
         profile_arn=profile_arn,
         thinking_config=thinking_config,
+        system_prefix_plan=system_plan,
     )
 
     return result.payload

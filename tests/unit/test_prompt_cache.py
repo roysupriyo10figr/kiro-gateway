@@ -77,11 +77,13 @@ def test_message_system_and_tool_cache_points(
     original = request.model_dump()
     payload = convert(request, "test", "profile")
     state = payload["conversationState"]
-    assert state["history"][0]["userInputMessage"]["cachePoint"] == {}
-    assert "cachePoint" not in state["history"][1]["assistantResponseMessage"]
+    assert state["history"][0]["userInputMessage"]["cachePoint"] == {"type": "default"}
+    assert state["history"][0]["userInputMessage"]["content"] == "Instructions"
+    assert "First question" in state["history"][1]["userInputMessage"]["content"]
+    assert "cachePoint" not in state["history"][2]["assistantResponseMessage"]
     current = state["currentMessage"]["userInputMessage"]
-    assert current["cachePoint"] == {}
-    assert current["userInputMessageContext"]["tools"][-1] == {"cachePoint": {}}
+    assert current["cachePoint"] == {"type": "default"}
+    assert current["userInputMessageContext"]["tools"][-1] == {"cachePoint": {"type": "default"}}
     assert "Instructions" in state["history"][0]["userInputMessage"]["content"]
     assert "Second question" in current["content"]
     assert request.model_dump() == original
@@ -101,6 +103,26 @@ def test_message_system_and_tool_cache_points(
 def test_no_false_positive_cache_markers(value: Any) -> None:
     """Malformed metadata and schema properties must not activate caching."""
     assert requests_cache(value) is False
+
+
+@pytest.mark.parametrize("api", ["anthropic", "openai"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_cached_assistant_history_keeps_native_reasoning(api: str, stream: bool) -> None:
+    """Both adapters retain signed assistant history so prefix rendering is stable."""
+    assistant = {"role": "assistant", "content": "OK", "cache_control": MARKER}
+    if api == "anthropic":
+        assistant["content"] = [{"type": "thinking", "thinking": "reason", "signature": "native-proof"}, {"type": "text", "text": "OK"}]
+        model, convert = AnthropicMessagesRequest, anthropic_to_kiro
+    else:
+        assistant.update(reasoning_content="reason", reasoning_signature="native-proof")
+        model, convert = ChatCompletionRequest, build_kiro_payload
+    request = model(model="claude-opus-5", max_tokens=64, stream=stream, messages=[{"role": "user", "content": "First"}, assistant, {"role": "user", "content": "Next"}])
+    original = request.model_dump()
+    payload = convert(request, "test", "profile")
+    history = payload["conversationState"]["history"][1]["assistantResponseMessage"]
+    assert history["reasoningContent"] == {"reasoningText": {"text": "reason", "signature": "native-proof"}}
+    assert history["cachePoint"] == {"type": "default"}
+    assert request.model_dump() == original
 
 
 def test_disable_translation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,14 +157,15 @@ def test_limits_checkpoints_without_removing_content() -> None:
     }
     original = deepcopy(payload)
     finalize_cache_points(payload)
-    assert sum("cachePoint" in entry["userInputMessage"] for entry in history) == 3
+    assert sum("cachePoint" in entry["userInputMessage"] for entry in history) == 6
+    assert payload == original
     assert [entry["userInputMessage"]["content"] for entry in history] == [
         entry["userInputMessage"]["content"]
         for entry in original["conversationState"]["history"]
     ]
     assert payload["conversationState"]["currentMessage"]["userInputMessage"][
         "userInputMessageContext"
-    ]["tools"] == [{"toolSpecification": {"name": "x"}}]
+    ]["tools"] == [{"toolSpecification": {"name": "x"}}, {"cachePoint": {}}]
 
 
 def test_merge_and_orphan_repair_keep_cache_intent() -> None:
@@ -167,6 +190,7 @@ def test_merge_and_orphan_repair_keep_cache_intent() -> None:
     )
     payload = anthropic_to_kiro(request, "test", "profile")
     assert (
-        payload["conversationState"]["currentMessage"]["userInputMessage"]["cachePoint"]
-        == {}
+        payload["conversationState"]["history"][0]["userInputMessage"]["cachePoint"]
+        == {"type": "default"}
     )
+    assert "cachePoint" not in payload["conversationState"]["currentMessage"]["userInputMessage"]

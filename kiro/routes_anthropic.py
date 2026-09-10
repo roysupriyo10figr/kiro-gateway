@@ -52,7 +52,8 @@ from kiro.streaming_anthropic import (
     stream_with_first_token_retry_anthropic,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import generate_conversation_id, get_upstream_request_id
+from kiro.prompt_cache import cache_diagnostic_headers
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
@@ -532,6 +533,8 @@ async def messages(
                             media_type="text/event-stream",
                             headers={
                                 "Cache-Control": "no-cache",
+                                "X-Kiro-Request-Id": get_upstream_request_id(response.headers),
+                                **cache_diagnostic_headers(kiro_payload),
                                 "Connection": "keep-alive",
                             },
                         )
@@ -556,7 +559,7 @@ async def messages(
                         if debug_logger:
                             debug_logger.discard_buffers()
 
-                        return JSONResponse(content=anthropic_response)
+                        return JSONResponse(content=anthropic_response, headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)})
 
                 else:
                     # ERROR - classify and decide
@@ -920,6 +923,8 @@ async def messages(
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
+                    "X-Kiro-Request-Id": get_upstream_request_id(response.headers),
+                    **cache_diagnostic_headers(kiro_payload),
                     "Connection": "keep-alive",
                 },
             )
@@ -943,7 +948,7 @@ async def messages(
             if debug_logger:
                 debug_logger.discard_buffers()
 
-            return JSONResponse(content=anthropic_response)
+            return JSONResponse(content=anthropic_response, headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)})
 
     except HTTPException as e:
         await http_client.close()

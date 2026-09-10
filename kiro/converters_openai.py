@@ -32,7 +32,9 @@ Contains functions for:
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
-from kiro.prompt_cache import requests_cache
+from kiro.prompt_cache import requests_cache, cache_translation_enabled, kiro_atomic_ranges
+from kiro.prompt_assembly import CacheDirective, TextSegment, TextPrefixPlan, partition_content, plan_text_prefix
+from kiro.native_reasoning import extract_reasoning_history
 
 from kiro.config import HIDDEN_MODELS
 from kiro.model_resolver import get_model_id_for_kiro
@@ -145,6 +147,56 @@ def _extract_tool_calls_from_openai(msg: ChatMessage) -> List[Dict[str, Any]]:
     return tool_calls
 
 
+def plan_openai_system(messages: List[ChatMessage]) -> TextPrefixPlan:
+    """Project OpenAI system content into the shared text-prefix planner.
+
+    Args:
+        messages: Source messages in their original order.
+
+    Returns:
+        System text with its original message and block boundaries retained.
+    """
+    parts = []
+    system_messages = [message for message in messages if message.role == "system"]
+    for index, message in enumerate(system_messages):
+        segments = partition_content(
+            message.content,
+            directive=CacheDirective.parse(getattr(message, "cache_control", None)),
+            enabled=cache_translation_enabled(),
+        )
+        parts.extend(
+            TextSegment(
+                ("\n" if index and part_index == 0 else "") + extract_text_content(segment.content),
+                segment.directive,
+            )
+            for part_index, segment in enumerate(segments)
+        )
+    return plan_text_prefix(parts)
+
+
+def partition_openai_user_message(message: ChatMessage) -> tuple[ChatMessage, ...]:
+    """Project user content boundaries without changing non-user wire messages.
+
+    Args:
+        message: Original OpenAI message.
+
+    Returns:
+        Detached user segments or the unchanged non-user message.
+    """
+    if message.role != "user":
+        return (message,)
+    segments = partition_content(
+        message.content,
+        directive=CacheDirective.parse(getattr(message, "cache_control", None)),
+        enabled=cache_translation_enabled(),
+        atomic_ranges=kiro_atomic_ranges(message.content, message.role),
+    )
+    return tuple(message.model_copy(update={
+        "content": segment.content,
+        "cache_control": segment.directive.to_wire() if segment.directive else None,
+    }) for segment in segments)
+
+
 def convert_openai_messages_to_unified(
     messages: List[ChatMessage],
 ) -> Tuple[str, List[UnifiedMessage]]:
@@ -174,6 +226,13 @@ def convert_openai_messages_to_unified(
 
     system_prompt = system_prompt.strip()
 
+    # OpenAI user blocks project into the same ordered segments as Anthropic.
+    non_system_messages = [
+        segment
+        for message in non_system_messages
+        for segment in partition_openai_user_message(message)
+    ]
+
     # Process tool messages - convert to user messages with tool_results
     processed = []
     pending_tool_results = []
@@ -184,6 +243,17 @@ def convert_openai_messages_to_unified(
     total_images = 0
 
     for msg in non_system_messages:
+        if pending_tool_results and (msg.role != "tool" or pending_tool_cache):
+            processed.append(UnifiedMessage(
+                role="user", content="",
+                tool_results=pending_tool_results.copy(),
+                images=pending_tool_images.copy() if pending_tool_images else None,
+                cache_point=pending_tool_cache,
+                preserve_boundary=True,
+            ))
+            pending_tool_results.clear()
+            pending_tool_images.clear()
+            pending_tool_cache = False
         if msg.role == "tool":
             pending_tool_cache = pending_tool_cache or requests_cache(msg)
             # Collect tool results
@@ -201,20 +271,6 @@ def convert_openai_messages_to_unified(
                 pending_tool_images.extend(tool_images)
                 total_images += len(tool_images)
         else:
-            # If there are accumulated tool results, create user message with them
-            if pending_tool_results:
-                unified_msg = UnifiedMessage(
-                    role="user",
-                    content="",
-                    tool_results=pending_tool_results.copy(),
-                    images=pending_tool_images.copy() if pending_tool_images else None,
-                    cache_point=pending_tool_cache,
-                )
-                processed.append(unified_msg)
-                pending_tool_results.clear()
-                pending_tool_images.clear()
-                pending_tool_cache = False
-
             # Convert regular message
             tool_calls = None
             tool_results = None
@@ -240,6 +296,12 @@ def convert_openai_messages_to_unified(
                 tool_results=tool_results,
                 images=images,
                 cache_point=requests_cache(msg),
+                preserve_boundary=msg.role != "assistant" or not tool_calls,
+                reasoning_content=extract_reasoning_history([{
+                    "type": "thinking",
+                    "thinking": getattr(msg, "reasoning_content", None),
+                    "signature": getattr(msg, "reasoning_signature", None),
+                }]) if msg.role == "assistant" else None,
             )
             processed.append(unified_msg)
 
@@ -251,6 +313,7 @@ def convert_openai_messages_to_unified(
             tool_results=pending_tool_results.copy(),
             images=pending_tool_images.copy() if pending_tool_images else None,
             cache_point=pending_tool_cache,
+            preserve_boundary=True,
         )
         processed.append(unified_msg)
 
@@ -261,10 +324,6 @@ def convert_openai_messages_to_unified(
             f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
         )
 
-    if processed and any(
-        requests_cache(msg) for msg in messages if msg.role == "system"
-    ):
-        processed[0].cache_point = True
     return system_prompt, processed
 
 
@@ -446,6 +505,8 @@ def build_kiro_payload(
     system_prompt, unified_messages = convert_openai_messages_to_unified(
         request_data.messages
     )
+    system_plan = plan_openai_system(request_data.messages)
+    system_prompt = system_plan.text
     if unified_messages and requests_cache(
         {"cache_control": getattr(request_data, "cache_control", None)}
     ):
@@ -481,6 +542,7 @@ def build_kiro_payload(
         conversation_id=conversation_id,
         profile_arn=profile_arn,
         thinking_config=thinking_config,
+        system_prefix_plan=system_plan,
     )
 
     return result.payload

@@ -1,6 +1,6 @@
 # Prompt Cache Verification
 
-Verified on 2026-09-09 against the organization's Kiro runtime using the existing
+Historical probes began on 2026-09-09 against the organization's Kiro runtime using the existing
 SQLite-backed SSO authentication. No credentials or user prompt contents were
 printed. All automated tests remain isolated from the network; the observations
 below came from separate, synthetic live probes.
@@ -21,8 +21,11 @@ implement native checkpoint translation.
 ## Native Probes
 
 Kiro CLI's installed SDK includes `cachePoint` fields on user and assistant
-messages and a cache-point variant in the tool list. Live requests with empty
-`cachePoint` objects on a message and in the tool list returned HTTP 200.
+messages and a cache-point variant in the tool list. The SDK shape requires
+`{"cachePoint":{"type":"default"}}`. Earlier requests using empty objects
+returned HTTP 200, but acceptance did not validate that checkpoint encoding.
+The gateway now emits the typed shape, with tool checkpoints as standalone
+tool-list entries.
 
 Synthetic repeated-prefix tests with Opus 5, low effort, and a brief requested
 answer reported these credits:
@@ -51,10 +54,13 @@ No cache token counters are synthesized from those measurements.
 
 - Preserve client cache markers through Pydantic validation and conversation
   conversion, including tool-result repairs and adjacent-message merging.
-- Map markers to enclosing Kiro message boundaries or tool checkpoints. System
-  markers map to the first message containing the merged system prompt. Exact
-  Anthropic block boundaries and TTLs are not representable by this mapping.
-- Keep at most four recent checkpoints without changing user content.
+- Plan structural content units independently of changing marker locations.
+  Eligible blocks become native message units; ordered system units and appended
+  generated context do not widen an earlier checkpoint.
+- Keep tool-result batches and reasoning groups atomic. Reject an internal
+  checkpoint that cannot be represented, instead of silently moving it.
+- Preserve requested checkpoints without an arbitrary four-point limit. Kiro
+  still controls TTLs and whether a request benefits from caching.
 - Preserve automatic backend caching when clients send no markers.
 - Make checkpoint translation independently disableable with
   `KIRO_PROMPT_CACHE=false`.
@@ -62,6 +68,54 @@ No cache token counters are synthesized from those measurements.
   fingerprints identify changed checkpoint contents, not cache hits.
 
 ## Remaining Measurement Limits
+
+### September 10 Resumed-Session Result
+
+After a full SSO logout/login, a fresh port-9000 server running the current
+translation code passed the real `kiro-claude -p` verifier. The wrapper retained
+its Opus 5 `[1m]`, max-effort defaults. Three resumed turns produced three
+matching Bash tool-call/result pairs in the saved Claude transcript. All seven
+captured requests (including one ancillary request) completed with HTTP 200,
+complete streams, and request-correlated credit metering.
+
+Ten repeated source-boundary comparisons had zero compiled-prefix mismatches.
+These comparisons covered the two stable system anchors. Conversation markers
+advanced on each request, so this run does not by itself prove that every
+previous conversation boundary survives marker removal; offline history and
+marker-movement tests cover that invariant.
+
+The first main call cost 0.124616 credits; later main calls cost 0.076618 and
+0.077231. Tool continuations cost 0.059051, 0.059697, and 0.060310. Responses took
+approximately 2.75-3.93 seconds. These observations are consistent with reuse,
+but different outputs and no counterbalanced control prevent assigning the
+savings specifically to gateway checkpoints. Native cache counters were absent.
+This is a successful bounded verification, not universal cache-hit proof.
+
+### Reproducing A Resumed Session
+
+Start an isolated gateway on port 9000 with `KIRO_CACHE_DIAGNOSTICS=true` and
+separate account-state files. Do not restart production to run a probe. Check
+the test window ID with `tmux list-windows` before using it below:
+
+```sh
+uv run --with-requirements requirements.txt python -m scripts.verify_claude_cache \
+  --gateway http://127.0.0.1:9000 \
+  --tmux-window '<test-window-id>' \
+  --output /tmp/kiro-cache-verification.json
+```
+
+Use the address the test server actually listens on. This is a paid live probe,
+not an offline test. It requires `kiro-claude` on PATH and a logged-in gateway.
+It overrides the client URL without changing wrapper defaults, runs three
+resumed synthetic turns with Bash tool calls, checks persisted Claude transcript
+IDs, compares repeated source/native boundary fingerprints, and correlates
+request IDs with metered credits in tmux logs. The report excludes prompt text
+and credentials. Missing upstream cache counters remain unknown.
+
+A passing report establishes only the tested workload. It does not prove exact
+cache writes or hits, checkpoint causality, arbitrary signed-reasoning round
+trips, or all providers' behavior. Rerun after restarting the isolated server
+whenever translation code changes; an older process cannot verify new code.
 
 ### Model Coverage
 

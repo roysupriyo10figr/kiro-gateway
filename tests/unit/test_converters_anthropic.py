@@ -1000,8 +1000,8 @@ class TestConvertAnthropicMessages:
         result = convert_anthropic_messages(messages)
 
         print(f"Result: {result}")
-        assert len(result) == 1
-        assert result[0].content == "Part 1 Part 2"
+        assert len(result) == 2
+        assert [message.content for message in result] == ["Part 1", " Part 2"]
 
     def test_converts_assistant_message_with_tool_use(self):
         """
@@ -1137,17 +1137,17 @@ class TestConvertAnthropicMessages:
         print(f"Result: {result}")
         print(f"Images: {result[0].images}")
 
-        assert len(result) == 1
-        assert result[0].role == "user"
+        assert len(result) == 2
+        assert all(message.role == "user" for message in result)
         assert result[0].content == "What's in this image?"
 
         print("Checking images field...")
-        assert result[0].images is not None, "images field should not be None"
-        assert len(result[0].images) == 1, (
-            f"Expected 1 image, got {len(result[0].images)}"
+        assert result[1].images is not None, "image unit must retain the image"
+        assert len(result[1].images) == 1, (
+            f"Expected 1 image, got {len(result[1].images)}"
         )
 
-        image = result[0].images[0]
+        image = result[1].images[0]
         print(
             f"Comparing image: Expected media_type='image/jpeg', Got '{image.get('media_type')}'"
         )
@@ -1190,11 +1190,11 @@ class TestConvertAnthropicMessages:
         print(f"Result: {result}")
 
         print("Checking user message has images...")
-        assert result[0].images is not None
-        assert len(result[0].images) == 1
+        assert result[1].images is not None
+        assert len(result[1].images) == 1
 
         print("Checking assistant message has no images...")
-        assert result[1].images is None, (
+        assert result[2].images is None, (
             "Assistant messages should not have images extracted"
         )
 
@@ -1246,13 +1246,13 @@ class TestConvertAnthropicMessages:
             f"Result images count: {len(result[0].images) if result[0].images else 0}"
         )
 
-        assert result[0].images is not None
-        assert len(result[0].images) == 3, (
-            f"Expected 3 images, got {len(result[0].images)}"
-        )
+        images = [image for message in result for image in (message.images or [])]
+        assert len(result) == 4
+        assert len(images) == 3
+        assert all(image["data"] == test_image_base64 for image in images)
 
         print("Checking image media types...")
-        media_types = [img["media_type"] for img in result[0].images]
+        media_types = [img["media_type"] for img in images]
         print(f"Media types: {media_types}")
         assert "image/jpeg" in media_types
         assert "image/png" in media_types
@@ -1300,8 +1300,7 @@ class TestConvertAnthropicMessages:
         print(f"Log records: {[r.message for r in caplog.records]}")
 
         # Check that images were extracted
-        assert result[0].images is not None
-        assert len(result[0].images) == 2
+        assert sum(len(message.images or []) for message in result) == 2
 
         # Note: loguru doesn't integrate with caplog by default
         # The function logs "Converted X Anthropic messages: Y tool_calls, Z tool_results, W images"
@@ -1497,7 +1496,7 @@ class TestAnthropicToKiro:
             "userInputMessage"
         ]["content"]
         print(f"Current content: {current_content}")
-        assert "You are a helpful assistant." in current_content
+        assert result["conversationState"]["history"][0]["userInputMessage"]["content"] == "You are a helpful assistant."
 
     def test_includes_tools(self):
         """

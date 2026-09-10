@@ -275,17 +275,19 @@ the gateway still requires its password.
 ### Prompt caching and credit usage
 
 The gateway translates explicit `cache_control: {"type": "ephemeral"}` markers
-into Kiro `cachePoint` objects for messages and tools. OpenAI-compatible clients
+into Kiro `cachePoint: {"type": "default"}` objects for messages and tools. OpenAI-compatible clients
 can supply the same extension on messages or tools. Both APIs and response modes
 share the translation. Standard OpenAI requests without markers retain Kiro's
 automatic behavior.
 
-Kiro's available checkpoint boundaries are coarser than Anthropic content blocks:
-a block checkpoint applies at the enclosing message boundary, and system markers
-apply at the first message containing the merged system prompt. Adjacent-message
-merging can extend that boundary. At most four recent checkpoints are emitted;
-only excess cache markers are removed, never prompt content. Requested TTLs are
-not guaranteed because Kiro controls cache lifetime. Set `KIRO_PROMPT_CACHE=false`
+The shared planner preserves source text units independently of where markers
+appear. Eligible content blocks become separate native message units, so moving
+a marker does not reframe the earlier prefix. System units remain ordered, and
+generated suffixes stay outside earlier marked prefixes. Tool-result batches
+and reasoning groups must remain atomic: a marker inside an indivisible group
+is rejected with an actionable error rather than silently moved. Checkpoints
+are not arbitrarily limited to four. Requested TTLs are not guaranteed because
+Kiro controls cache lifetime. Set `KIRO_PROMPT_CACHE=false`
 to disable gateway-added checkpoints; this does not disable Kiro's own caching.
 
 Client beta headers are not blindly forwarded to Kiro's different API. Missing
@@ -297,6 +299,11 @@ first-byte wait time, and metered credit usage. `LOG_LEVEL=DEBUG` also includes
 checkpoint fingerprints without prompt text or credentials. Compare actual
 credits for repeated prefixes and check retries before diagnosing an efficiency
 regression. See [the cache verification notes](docs/cache-verification.md).
+
+For isolated verification, `KIRO_CACHE_DIAGNOSTICS=true` also exposes compiled
+prefix fingerprints in response headers. These prove translation stability,
+not backend cache hits. Signed-reasoning round trips and all-provider cache
+behavior are not yet comprehensively verified.
 
 ### Reasoning and streaming
 

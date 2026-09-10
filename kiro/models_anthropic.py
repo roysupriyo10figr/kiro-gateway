@@ -197,11 +197,11 @@ class AnthropicMessage(BaseModel):
     Message in Anthropic format.
 
     Attributes:
-        role: Message role (user or assistant)
+        role: Message role, including Claude Code's inline system-message extension.
         content: Message content (string or list of content blocks)
     """
 
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content: Union[str, List[ContentBlock]]
 
     model_config = {"extra": "allow"}
@@ -309,12 +309,12 @@ SystemPrompt = Union[str, List[SystemContentBlock], List[Dict[str, Any]]]
 
 
 class AnthropicRequestBase(BaseModel):
-    """Normalize client system messages before validating Anthropic requests."""
+    """Validate client extensions shared by generation and token counting."""
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_system_messages(cls, data: Any) -> Any:
-        """Lift embedded system text into the standard top-level system field.
+    def validate_inline_system_messages(cls, data: Any) -> Any:
+        """Validate inline system messages without moving their source positions.
 
         Applies to generation (both response modes) and token counting. OpenAI
         already accepts system messages through its own converter.
@@ -323,12 +323,11 @@ class AnthropicRequestBase(BaseModel):
             data: Unvalidated request data.
 
         Returns:
-            A copied request with system blocks in encounter order, following
-            any existing top-level system prompt. Standard requests are unchanged.
+            Original request data with its message order and boundaries unchanged.
 
         Raises:
             ValueError: If embedded system content is not text or text blocks,
-                or the existing system field cannot be combined with it.
+                or the request contains no user or assistant message.
         """
         if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
             return data
@@ -341,23 +340,9 @@ class AnthropicRequestBase(BaseModel):
         if not embedded:
             return data
 
-        system = data.get("system")
-        if system is None:
-            blocks = []
-        elif isinstance(system, str):
-            blocks = [{"type": "text", "text": system}]
-        elif isinstance(system, list):
-            blocks = list(system)
-        else:
-            raise ValueError("system must be a string or a list of text blocks")
-
         adapter = TypeAdapter(Union[str, List[SystemContentBlock]])
         for message in embedded:
-            content = adapter.validate_python(message.get("content"))
-            if isinstance(content, str):
-                blocks.append({"type": "text", "text": content})
-            else:
-                blocks.extend(block.model_dump(exclude_unset=True) for block in content)
+            adapter.validate_python(message.get("content"))
 
         messages = [
             message
@@ -369,8 +354,8 @@ class AnthropicRequestBase(BaseModel):
                 "Include at least one user or assistant message alongside system instructions"
             )
 
-        logger.debug("Normalized {} embedded Anthropic system messages", len(embedded))
-        return {**data, "system": blocks, "messages": messages}
+        logger.debug("Preserved {} inline Anthropic system messages in source order", len(embedded))
+        return data
 
 
 class AnthropicMessagesRequest(AnthropicRequestBase):

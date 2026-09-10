@@ -31,6 +31,7 @@ to convert their formats to Kiro API format.
 """
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -45,8 +46,9 @@ from kiro.config import (
     AUTO_TRIM_PAYLOAD,
 )
 from kiro.payload_guards import check_payload_size, trim_payload_to_limit
-from kiro.native_reasoning import native_reasoning_fields
-from kiro.prompt_cache import finalize_cache_points
+from kiro.native_reasoning import native_reasoning_fields, merge_reasoning_history
+from kiro.prompt_cache import finalize_cache_points, make_cache_point
+from kiro.prompt_assembly import TextPrefixPlan
 
 
 # ==================================================================================================
@@ -110,6 +112,8 @@ class UnifiedMessage:
     tool_results: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[Dict[str, Any]]] = None
     cache_point: bool = False
+    preserve_boundary: bool = False
+    reasoning_content: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -661,7 +665,7 @@ def convert_tools_to_kiro_format(
         )
 
         if tool.cache_point:
-            kiro_tools.append({"cachePoint": {}})
+            kiro_tools.append({"cachePoint": make_cache_point()})
 
     return kiro_tools
 
@@ -1028,7 +1032,9 @@ def strip_all_tool_content(
                 tool_calls=None,
                 tool_results=None,
                 images=msg.images,
+                reasoning_content=msg.reasoning_content,
                 cache_point=msg.cache_point,
+                preserve_boundary=msg.preserve_boundary,
             )
             result.append(cleaned_msg)
         else:
@@ -1074,14 +1080,17 @@ def ensure_assistant_before_tool_results(
 
     result = []
     converted_any_tool_results = False
+    pending_tool_ids = set()
 
     for msg in messages:
+        if msg.role == "assistant":
+            pending_tool_ids.update(call.get("id") for call in (msg.tool_calls or []) if call.get("id"))
         # Check if this message has tool_results
         if msg.tool_results:
-            # Check if the previous message is an assistant with tool_calls
-            has_preceding_assistant = (
-                result and result[-1].role == "assistant" and result[-1].tool_calls
-            )
+            result_ids = {item.get("tool_use_id") for item in msg.tool_results}
+            has_preceding_assistant = bool(result_ids) and result_ids <= pending_tool_ids
+            if has_preceding_assistant:
+                pending_tool_ids.difference_update(result_ids)
 
             if not has_preceding_assistant:
                 # We cannot create a valid synthetic assistant message because we don't know
@@ -1112,12 +1121,18 @@ def ensure_assistant_before_tool_results(
                     tool_calls=msg.tool_calls,
                     tool_results=None,  # Remove orphaned tool_results (now in text)
                     images=msg.images,
+                    reasoning_content=msg.reasoning_content,
                     cache_point=msg.cache_point,
+                    preserve_boundary=msg.preserve_boundary,
                 )
                 result.append(cleaned_msg)
                 converted_any_tool_results = True
                 continue
 
+        if pending_tool_ids and msg.role in ("user", "system"):
+            if msg.cache_point:
+                raise ValueError("Cache boundary splits pending parallel tool results; place it after all results")
+            msg = replace(msg, preserve_boundary=False)
         result.append(msg)
 
     return result, converted_any_tool_results
@@ -1151,8 +1166,9 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
             continue
 
         last = merged[-1]
-        if msg.role == last.role:
+        if msg.role == last.role and not last.cache_point and not last.preserve_boundary:
             last.cache_point = last.cache_point or msg.cache_point
+            last.reasoning_content = merge_reasoning_history(last.reasoning_content, msg.reasoning_content)
             # Merge content
             if isinstance(last.content, list) and isinstance(msg.content, list):
                 last.content = last.content + msg.content
@@ -1305,7 +1321,9 @@ def normalize_message_roles(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 tool_calls=msg.tool_calls,
                 tool_results=msg.tool_results,
                 images=msg.images,
+                reasoning_content=msg.reasoning_content,
                 cache_point=msg.cache_point,
+                preserve_boundary=msg.preserve_boundary,
             )
             normalized.append(normalized_msg)
             converted_count += 1
@@ -1361,7 +1379,7 @@ def ensure_alternating_roles(messages: List[UnifiedMessage]) -> List[UnifiedMess
         prev_role = result[-1].role
 
         # If both current and previous are user → insert synthetic assistant
-        if msg.role == "user" and prev_role == "user":
+        if msg.role == "user" and prev_role == "user" and not result[-1].cache_point and not result[-1].preserve_boundary:
             synthetic_assistant = UnifiedMessage(
                 role="assistant",
                 content="(empty placeholder)",  # Consistent with build_kiro_history() placeholder
@@ -1449,7 +1467,7 @@ def build_kiro_history(
                 user_input["userInputMessageContext"] = user_input_context
 
             if msg.cache_point:
-                user_input["cachePoint"] = {}
+                user_input["cachePoint"] = make_cache_point()
             history.append({"userInputMessage": user_input})
 
         elif msg.role == "assistant":
@@ -1460,6 +1478,8 @@ def build_kiro_history(
                 content = "(empty placeholder)"
 
             assistant_response = {"content": content}
+            if msg.reasoning_content is not None:
+                assistant_response["reasoningContent"] = msg.reasoning_content
 
             # Process tool_calls
             tool_uses = extract_tool_uses_from_message(msg.content, msg.tool_calls)
@@ -1467,7 +1487,7 @@ def build_kiro_history(
                 assistant_response["toolUses"] = tool_uses
 
             if msg.cache_point:
-                assistant_response["cachePoint"] = {}
+                assistant_response["cachePoint"] = make_cache_point()
             history.append({"assistantResponseMessage": assistant_response})
 
     return history
@@ -1486,6 +1506,7 @@ def build_kiro_payload(
     conversation_id: str,
     profile_arn: str,
     thinking_config: ThinkingConfig,
+    system_prefix_plan: Optional[TextPrefixPlan] = None,
 ) -> KiroPayloadResult:
     """
     Builds complete payload for Kiro API from unified data.
@@ -1501,6 +1522,7 @@ def build_kiro_payload(
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
         thinking_config: Thinking configuration from API adapter
+        system_prefix_plan: Shared immutable plan retaining source system boundaries.
 
     Returns:
         KiroPayloadResult with payload and tool documentation
@@ -1508,6 +1530,9 @@ def build_kiro_payload(
     Raises:
         ValueError: If there are no messages to send
     """
+    # Normalization operates on owned records, never on caller-owned prompt data.
+    messages = deepcopy(messages)
+    tools = deepcopy(tools)
     thinking_config = replace(
         thinking_config,
         native_fields=native_reasoning_fields(
@@ -1535,7 +1560,7 @@ def build_kiro_payload(
 
     # Add thinking mode legitimization to system prompt if enabled
     thinking_system_addition = (
-        get_thinking_system_prompt_addition()
+        get_thinking_system_prompt_addition() + inject_thinking_tags("", thinking_config)
         if thinking_config.native_fields is None
         else ""
     )
@@ -1569,7 +1594,7 @@ def build_kiro_payload(
         )
 
     # Merge adjacent messages with the same role
-    merged_messages = merge_adjacent_messages(messages_with_assistants)
+    merged_messages = merge_adjacent_messages(normalize_message_roles(messages_with_assistants))
 
     # Ensure first message is from user (Kiro API requirement, fixes issue #60)
     merged_messages = ensure_first_message_is_user(merged_messages)
@@ -1585,6 +1610,13 @@ def build_kiro_payload(
 
     if not merged_messages:
         raise ValueError("No messages to send")
+
+    if system_prefix_plan is not None and system_prefix_plan.units:
+        plan = system_prefix_plan.append_suffix(full_system_prompt[len(system_prompt):] + "\n\n")
+        prefix_messages = [UnifiedMessage(role="user", content=part.text, cache_point=part.directive is not None, preserve_boundary=True) for part in plan.units]
+        first = replace(merged_messages[0], content=plan.suffix + extract_text_content(merged_messages[0].content))
+        merged_messages = prefix_messages + [first] + merged_messages[1:]
+        full_system_prompt = ""
 
     # Build history (all messages except the last one)
     history_messages = merged_messages[:-1] if len(merged_messages) > 1 else []
@@ -1608,8 +1640,10 @@ def build_kiro_payload(
 
     # If current message is assistant, need to add it to history
     # and create user message placeholder
-    if current_message.role == "assistant":
-        history.append({"assistantResponseMessage": {"content": current_content}})
+    is_assistant_prefill = current_message.role == "assistant"
+    if is_assistant_prefill:
+        history.extend(build_kiro_history([replace(current_message, content=current_content)], model_id))
+        current_message = UnifiedMessage(role="user", content="(empty placeholder)")
         current_content = "(empty placeholder)"
 
     # If content is empty - use placeholder
@@ -1651,8 +1685,6 @@ def build_kiro_payload(
             user_input_context["toolResults"] = tool_results
 
     # Inject thinking tags if enabled (only for the current/last user message)
-    if current_message.role == "user":
-        current_content = inject_thinking_tags(current_content, thinking_config)
 
     # Build userInputMessage
     user_input_message = {
@@ -1691,7 +1723,7 @@ def build_kiro_payload(
     if current_message.cache_point:
         payload["conversationState"]["currentMessage"]["userInputMessage"][
             "cachePoint"
-        ] = {}
+        ] = make_cache_point()
     finalize_cache_points(payload)
 
     # Payload size guard — auto-trim if enabled

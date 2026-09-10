@@ -105,13 +105,14 @@ class TestEmbeddedSystemMessages:
         }
         original = deepcopy(data)
         request = request_type.model_validate(data)
-        blocks = request.model_dump(exclude_none=True)["system"]
-        expected = (["Original"] if system is not None else []) + ["First", "Second"]
-        assert [block["text"] for block in blocks] == expected
-        assert blocks[-1] == cached
+        serialized = request.model_dump(exclude_none=True)
+        assert serialized.get("system") == system
+        assert serialized["messages"][3]["content"] == [cached]
         assert [message.role for message in request.messages] == [
             "user",
+            "system",
             "assistant",
+            "system",
             "user",
         ]
         assert request.messages[-1].content[0].tool_use_id == "t"
@@ -157,28 +158,32 @@ class TestEmbeddedSystemMessages:
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("content", ["", [], "Instructions"])
-    def test_conversion_matches_standard_request(
+    def test_conversion_preserves_inline_system_position(
         self, stream: bool, content: Any
     ) -> None:
-        """Both response modes produce the same Kiro payload as standard input."""
+        """Inline instructions remain after the preceding user message in both modes."""
         from kiro.converters_anthropic import anthropic_to_kiro
 
         data = {
             "model": "test",
             "max_tokens": 32,
             "stream": stream,
-            "messages": [{"role": "user", "content": "Hi"}],
+            "messages": [{"role": "user", "content": "USER_ANCHOR"}],
         }
-        standard = AnthropicMessagesRequest.model_validate({**data, "system": content})
         embedded = AnthropicMessagesRequest.model_validate(
             {
                 **data,
                 "messages": [*data["messages"], {"role": "system", "content": content}],
             }
         )
-        assert anthropic_to_kiro(
-            embedded, "conversation", "profile"
-        ) == anthropic_to_kiro(standard, "conversation", "profile")
+        assert embedded.messages[1].role == "system"
+        payload = anthropic_to_kiro(embedded, "conversation", "profile")
+        units = [next(iter(entry.values()))["content"] for entry in payload["conversationState"].get("history", [])]
+        units.append(payload["conversationState"]["currentMessage"]["userInputMessage"]["content"])
+        text = "\n".join(units)
+        assert "USER_ANCHOR" in text
+        if isinstance(content, str) and content:
+            assert text.rfind("USER_ANCHOR") < text.rfind(content)
 
 
 # Base64 1x1 pixel JPEG for testing

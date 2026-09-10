@@ -55,7 +55,8 @@ from kiro.streaming_openai import (
     stream_with_first_token_retry,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import generate_conversation_id, get_upstream_request_id
+from kiro.prompt_cache import cache_diagnostic_headers
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
 
@@ -454,6 +455,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         return StreamingResponse(
                             with_keepalive(stream_wrapper(), ": ping\n\n"),
                             media_type="text/event-stream",
+                            headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)},
                         )
 
                     else:
@@ -476,7 +478,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         if debug_logger:
                             debug_logger.discard_buffers()
 
-                        return JSONResponse(content=openai_response)
+                        return JSONResponse(content=openai_response, headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)})
 
                 else:
                     # ERROR - classify and decide
@@ -797,6 +799,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             return StreamingResponse(
                 with_keepalive(stream_wrapper(), ": ping\n\n"),
                 media_type="text/event-stream",
+                headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)},
             )
 
         else:
@@ -822,7 +825,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             if debug_logger:
                 debug_logger.discard_buffers()
 
-            return JSONResponse(content=openai_response)
+            return JSONResponse(content=openai_response, headers={"X-Kiro-Request-Id": get_upstream_request_id(response.headers), **cache_diagnostic_headers(kiro_payload)})
 
     except HTTPException as e:
         await http_client.close()
